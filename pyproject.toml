@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wechat-work-desk"
+version = "0.1.0"
+description = "Agent 阅读微信导出记录后的工作事项与交接工作台"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+workdesk = "workdesk.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["workdesk*"]
+
+[tool.setuptools.package-data]
+workdesk = ["web/*"]

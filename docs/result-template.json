@@ -1,0 +1,29 @@
+{
+  "coverage": [
+    {"source_id": "替换为本轮文件id", "state": "read", "note": "实际已读范围，例如完整文本1至150行；其他附件逐个列出未读原因"}
+  ],
+  "backgrounds": [
+    {
+      "object_id": "替换为本轮对象id",
+      "summary": "对象用途及已明确的工作背景；这是一份完整的背景建议",
+      "role": "记录中能确认的用户职责，无法确定就留空",
+      "uncertainties": "仍需用户确认的背景信息",
+      "evidence": [{"source_id": "同对象本轮已读文件id", "locator": "消息时间/发送人/行号或附件页码"}]
+    }
+  ],
+  "matters": [
+    {
+      "object_id": "替换为本轮对象id",
+      "dedup_key": "稳定事项标识，已有同一事项须沿用旧值",
+      "title": "短标题",
+      "detail": "明确要求，精简并保留关键事实",
+      "notice_at": "2026-10-10T09:00:00+08:00",
+      "deadline": "通知原文中的明确期限，未知留空",
+      "owner": "适用人员/责任；未知留空",
+      "action": "需要推进的下一步",
+      "questions": "适用性、是否已办、后续修订等待确认信息",
+      "suggested_state": "needs_confirmation",
+      "evidence": [{"source_id": "同对象本轮已读文件id", "locator": "2026-10-10 09:00 发送人/第1至4行"}]
+    }
+  ]
+}
