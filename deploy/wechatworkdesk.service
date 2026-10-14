@@ -1,0 +1,14 @@
+[Unit]
+Description=WeChatWorkDesk private website
+Requires=docker.service
+After=docker.service network-online.target
+
+[Service]
+Restart=on-failure
+RestartSec=5
+ExecStart=/usr/bin/docker run --rm --name wechatworkdesk --network host --read-only --tmpfs /tmp:rw,noexec,nosuid,size=768m --cap-drop ALL --security-opt no-new-privileges --memory 600m --cpus 1 --pids-limit 128 -v /var/lib/wechatworkdesk:/var/lib/wechatworkdesk -v /etc/wechatworkdesk:/run/wcwd:ro wechatworkdesk:prepared
+ExecStop=/usr/bin/docker stop -t 30 wechatworkdesk
+TimeoutStopSec=40
+
+[Install]
+WantedBy=multi-user.target

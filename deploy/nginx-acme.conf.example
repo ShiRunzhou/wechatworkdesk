@@ -1,0 +1,6 @@
+server {
+    listen 80;
+    server_name desk.plantisland.cn;
+    location /.well-known/acme-challenge/ { root /var/lib/wechatworkdesk-acme; }
+    location / { return 404; }
+}

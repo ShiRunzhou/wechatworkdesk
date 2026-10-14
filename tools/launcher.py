@@ -74,6 +74,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("action", choices=["start", "stop"])
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--page",choices=['/','/update'],default='/')
     args = parser.parse_args()
     DATA.mkdir(exist_ok=True)
     marker = DATA / "runtime.json"
@@ -127,8 +128,8 @@ def main():
             process.terminate()
             raise SystemExit("服务未就绪，本次启动进程已退出。")
     if not args.no_browser:
-        webbrowser.open(URL)
-    print(URL)
+        webbrowser.open(URL.rstrip('/')+args.page)
+    print(URL.rstrip('/')+args.page)
 
 
 if __name__ == "__main__":

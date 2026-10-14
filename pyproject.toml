@@ -9,6 +9,9 @@ description = "Agent 阅读微信导出记录后的工作事项与交接工作�
 requires-python = ">=3.12"
 dependencies = []
 
+[project.optional-dependencies]
+cloud = ["cryptography>=44"]
+
 [project.scripts]
 workdesk = "workdesk.cli:main"
 

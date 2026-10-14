@@ -51,8 +51,16 @@ def main():
     locate = sources.add_parser("locate")
     locate.add_argument("source_id")
     commands.add_parser("status")
+    memory=commands.add_parser('memory',help='工作记忆与历史档案').add_subparsers(dest='action',required=True)
+    memory.add_parser('state');memory.add_parser('export');memory.add_parser('scan')
+    search=memory.add_parser('search');search.add_argument('query');search.add_argument('--object-id',default='')
+    storage=commands.add_parser('storage',help='资料清理').add_subparsers(dest='action',required=True)
+    storage.add_parser('preview')
+    policy=storage.add_parser('policy');policy.add_argument('--days',type=int,default=90);policy.add_argument('--auto',action='store_true')
+    clean=storage.add_parser('clean');clean.add_argument('--selection',required=True,help='包含token、ids、confirmed的预览选择JSON文件')
     serve = commands.add_parser("serve")
     serve.add_argument("--port", type=int, default=8770)
+    serve.add_argument("--website-config", help="启用私有网站模式，指定独立登录配置")
     args = parser.parse_args()
     try:
         store = Store(args.data)
@@ -72,9 +80,18 @@ def main():
             output({**source, "snapshot_path": str(file), "note": "请用相应工具读取该快照；此命令不表示已经阅读。"})
         elif args.command == "status":
             output(store.dashboard())
+        elif args.command=='memory':
+            if args.action=='state':output(store.memory_state())
+            elif args.action=='export':output(store.export_memory())
+            elif args.action=='scan':output(store.scan_feedback())
+            else:output({'history':store.search_memory(args.query,args.object_id)})
+        elif args.command=='storage':
+            if args.action=='preview':output(store.storage_preview())
+            elif args.action=='policy':output(store.save_storage_policy({'retention_days':args.days,'auto_enabled':args.auto}))
+            else:output(store.storage_clean(json.loads(Path(args.selection).read_text('utf-8-sig'))))
         else:
             from .server import serve as start_server
-            start_server(store, args.port)
+            start_server(store, args.port, args.website_config)
     except (DeskError, OSError, json.JSONDecodeError) as error:
         print(json.dumps({"error": str(error)}, ensure_ascii=False), file=sys.stderr)
         raise SystemExit(1)

@@ -144,6 +144,7 @@ class WorkDeskTests(unittest.TestCase):
 
     def test_incremental_preserves_human_state_and_original_result(self):
         matter = self.publish()
+        self.assertRegex(matter["reference_code"], r"^20261010-O\d{3}-001$")
         reviewed = self.store.feedback("matter", matter["id"], {"version": matter["version"], "state": "completed", "note": "已导出至模拟目录"})
         run = self.store.create_run([self.obj["id"]], "通知更新")
         context = self.store.context(run["id"])
@@ -151,8 +152,10 @@ class WorkDeskTests(unittest.TestCase):
         self.assertEqual(context["objects"][0]["existing_matters"][0]["human_note"], "已导出至模拟目录")
         payload = self.payload()
         payload["matters"][0]["detail"] = "增加一个导出字段。"
+        payload["matters"][0]["notice_at"] = "2026-10-11T09:00:00+08:00"
         self.assertEqual(self.store.submit(run["id"], payload)["changed"], 1)
         latest = self.store.dashboard()["matters"][0]
+        self.assertEqual(latest["reference_code"], matter["reference_code"])
         self.assertEqual(latest["state"], "completed")
         self.assertEqual(latest["human_note"], reviewed["human_note"])
         self.assertEqual(latest["changed"], 1)
@@ -177,10 +180,56 @@ class WorkDeskTests(unittest.TestCase):
 
     def test_deferred_requires_future_timezone_time(self):
         matter = self.publish()
-        for when in ["", "2020-01-01T00:00:00+08:00", "2099-01-01T00:00:00"]:
+        for when in ["2020-01-01T00:00:00+08:00", "2099-01-01T00:00:00"]:
             with self.assertRaises(DeskError):
-                self.store.feedback("matter", matter["id"], {"version": 1, "state": "deferred", "deferred_until": when})
-        self.assertEqual(self.store.feedback("matter", matter["id"], {"version": 1, "state": "deferred", "deferred_until": "2099-01-01T00:00:00+08:00"})["state"], "deferred")
+                self.store.feedback("matter", matter["id"], {"version": 1, "state": "pending", "deferred_until": when})
+        result = self.store.feedback("matter", matter["id"], {"version": 1, "state": "pending", "deferred_until": "2099-01-01T00:00:00+08:00"})
+        self.assertEqual(result["state"], "pending")
+        self.assertTrue(result["deferred_until"])
+        with self.assertRaises(DeskError):
+            self.store.feedback("matter", matter["id"], {"version": 2, "state": "in_progress", "deferred_until": "2099-01-01T00:00:00+08:00"})
+        result = self.store.feedback("matter", matter["id"], {"version": 2, "state": "in_progress"})
+        self.assertEqual(result["deferred_until"], "")
+        self.assertFalse(result["status_unverified"])
+
+    def test_legacy_status_migrates_without_losing_uncertainty_or_deferral(self):
+        matter = self.publish()
+        with self.store.connect() as con:
+            con.execute("UPDATE matters SET state='needs_confirmation' WHERE id=?", (matter["id"],))
+        reopened = Store(self.root / "data")
+        migrated = reopened.dashboard()["matters"][0]
+        self.assertEqual(migrated["state"], "unoperated")
+        self.assertTrue(migrated["status_unverified"])
+        with reopened.connect() as con:
+            con.execute("UPDATE matters SET state='deferred',deferred_until='2099-01-01T00:00:00+08:00' WHERE id=?", (matter["id"],))
+        again = Store(self.root / "data").dashboard()["matters"][0]
+        self.assertEqual(again["state"], "pending")
+        self.assertEqual(again["deferred_until"], "2099-01-01")
+
+    def test_progress_followup_is_independent_and_clears_on_completion(self):
+        matter = self.publish()
+        for when in ["2020-01-01T00:00:00+08:00", "2099-01-01T00:00:00"]:
+            with self.assertRaises(DeskError):
+                self.store.feedback("matter", matter["id"], {"version": 1, "state": "in_progress", "followup_at": when})
+        with self.assertRaises(DeskError):
+            self.store.feedback("matter", matter["id"], {"version": 1, "state": "pending", "followup_at": "2099-01-01T00:00:00+08:00"})
+        result = self.store.feedback("matter", matter["id"], {"version": 1, "state": "in_progress", "followup_at": "2099-01-01T00:00:00+08:00"})
+        self.assertTrue(result["followup_at"])
+        self.assertEqual(result["deferred_until"], "")
+        result = self.store.feedback("matter", matter["id"], {"version": 2, "state": "completed"})
+        self.assertEqual(result["followup_at"], "")
+
+    def test_reminder_allows_today_and_normalizes_legacy_shanghai_day(self):
+        from datetime import datetime, timezone, timedelta
+        from workdesk.store import reminder_date
+        today = datetime.now(timezone(timedelta(hours=8))).date().isoformat()
+        self.assertEqual(reminder_date(today.replace("-", "/"), "日期"), today)
+        self.assertEqual(reminder_date("2099-01-01T18:30:00+00:00", "日期"), "2099-01-02")
+        with self.assertRaises(DeskError):
+            reminder_date("2099/02/30", "日期")
+        matter = self.publish()
+        result = self.store.feedback("matter", matter["id"], {"version": 1, "state": "in_progress", "followup_at": today})
+        self.assertEqual(result["followup_at"], today)
 
     def test_background_only_confirmed_enters_next_context(self):
         self.publish()
@@ -195,10 +244,23 @@ class WorkDeskTests(unittest.TestCase):
         matter = self.publish()
         handoff = self.store.handoff(matter["id"], matter["version"], "先核对字段，暂不提交")
         self.assertIn("本地快照", handoff["markdown"])
+        self.assertIn(matter["reference_code"], handoff["markdown"])
         self.assertIn("先核对字段", handoff["markdown"])
-        self.assertEqual(self.store.dashboard()["matters"][0]["state"], "needs_confirmation")
+        self.assertEqual(self.store.dashboard()["matters"][0]["state"], "unoperated")
+        self.assertTrue(self.store.dashboard()["matters"][0]["status_unverified"])
         reopened = Store(self.root / "data")
         self.assertEqual(reopened.dashboard()["handoffs"][0]["id"], handoff["id"])
+
+    def test_new_matters_stay_unoperated_until_human_judgment(self):
+        matter = self.publish()
+        self.assertEqual(matter["state"], "unoperated")
+        self.store.context(self.run["id"])
+        self.assertEqual(self.store.dashboard()["matters"][0]["state"], "unoperated")
+        updated = self.store.feedback("matter", matter["id"], {"version": matter["version"], "state": "in_progress"})
+        self.assertEqual(Store(self.root / "data").dashboard()["matters"][0]["state"], "in_progress")
+        reverted = self.store.feedback("matter", matter["id"], {"version": updated["version"], "state": "pending"})
+        self.assertEqual(reverted["state"], "pending")
+        self.assertEqual(Store(self.root / "data").dashboard()["matters"][0]["state"], "pending")
 
     def test_empty_matters_is_valid_and_missing_next_round_not_completion(self):
         matter = self.publish()

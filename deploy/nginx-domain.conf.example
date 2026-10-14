@@ -1,0 +1,25 @@
+# Enable only after desk DNS and trusted certificate are ready.
+server {
+    listen 80;
+    server_name desk.plantisland.cn;
+    location /.well-known/acme-challenge/ { root /var/lib/wechatworkdesk-acme; }
+    location / { return 301 https://desk.plantisland.cn$request_uri; }
+}
+server {
+    listen 443 ssl;
+    server_name desk.plantisland.cn;
+    ssl_certificate /etc/letsencrypt/live/desk.plantisland.cn/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/desk.plantisland.cn/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    client_max_body_size 200m;
+    client_body_timeout 120s;
+    location / {
+        proxy_pass http://127.0.0.1:8770;
+        proxy_set_header Host 127.0.0.1:8770;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header Origin $http_origin;
+        proxy_read_timeout 180s;
+        proxy_request_buffering on;
+        add_header X-Content-Type-Options nosniff always;
+    }
+}
