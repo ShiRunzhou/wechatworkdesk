@@ -260,6 +260,9 @@ class CloudPipeline(Pipeline):
                                'warnings':[w for w in j['warnings'] if not w.startswith(('复用','已发布'))]}
                     for sid in ctx['pipeline']['primary_sources']+ctx['pipeline']['selected_assets']:
                         s=sources[sid]
+                        canonical=j.get('asset_aliases',{}).get(sid)
+                        if canonical and s['object_id']==oid and (states.get(canonical)=='read' or canonical in j.get('ledger',{}) and Path(s['relative_path']).suffix.lower() in IMAGES):
+                            candidate['sources'][s['relative_path']]=s['sha256']
                         if s['object_id']==oid and states.get(sid)=='read':candidate['sources'][s['relative_path']]=s['sha256']
                         elif s['object_id']==oid and sid in j.get('ledger',{}) and Path(s['relative_path']).suffix.lower() in IMAGES:
                             candidate['sources'][s['relative_path']]=s['sha256']

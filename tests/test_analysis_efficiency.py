@@ -132,3 +132,32 @@ class EfficiencyTests(unittest.TestCase):
         self.assertEqual(last['budget_start'],{'calls':93,'tokens':1700000})
         last['status']='paused';self.flow.save(last);self.flow.retry(j['id'],False)
         self.assertEqual(self.flow.job(j['id'])['budget_start'],{'calls':93,'tokens':1700000})
+
+    def test_per_job_allowance_does_not_change_profile_or_reset_checkpoint(self):
+        self.flow.settings.save({'max_model_calls':1});j=self.run_job();attempt=j['attempt']
+        self.flow.retry(j['id'],False,limits={'max_model_calls':4,'max_total_tokens':500000})
+        self.assertEqual(self.flow.job(j['id'])['attempt'],attempt)
+        self.assertEqual(self.flow.settings.public()['max_model_calls'],1)
+        self.flow.run(j['id']);self.assertEqual(self.flow.job(j['id'])['status'],'completed')
+
+    def test_attachment_dedup_uses_hash_and_object_and_prefers_paid_checkpoint(self):
+        from workdesk.materials import Pool
+        from workdesk.flow import Pipeline
+        ctx={'sources':[dict(id='a',object_id='o1',sha256='same',relative_path='attachments/a.png'),dict(id='b',object_id='o1',sha256='same',relative_path='media/b.png'),dict(id='c',object_id='o2',sha256='same',relative_path='media/c.png')],'pipeline':{'selected_assets':['a','b','c']}}
+        folder=self.root/'checkpoint';folder.mkdir();(folder/'a-image.json').write_text('{}','utf8')
+        chosen,aliases=Pipeline._asset_plan(ctx,Pool(ctx),folder)
+        self.assertEqual(chosen,['a','c']);self.assertEqual(aliases,{'b':'a'})
+
+    def test_attachment_stage_does_not_request_rewrite_of_entire_draft(self):
+        j=self.flow.create(self.payload,False);ctx=self.flow.context(j['id']);draft=[dict(dedup_key='stable',title='实训材料',detail='已有背景'*500,evidence=[{'source_id':'dummy','locator':'第1行'}])]
+        messages=self.flow._messages(self.flow.job(j['id']),ctx,self.obj['id'],[],draft,verify=False)
+        content=json.loads(messages[-1]['content']);self.assertFalse(content['draft_to_verify'])
+        self.assertEqual(content['context']['current_candidates'][0]['dedup_key'],'stable')
+        self.assertLessEqual(len(content['context']['current_candidates'][0]['detail']),500)
+
+    def test_duplicate_attachment_only_called_once_and_repeat_reused(self):
+        folder=self.root/'duplicate-assets';folder.mkdir();(folder/'messages.md').write_text(self.md.read_text('utf8')+'[甲](a.txt) [乙](b.txt)\n','utf8')
+        (folder/'a.txt').write_text('实习附件需核对。','utf8');(folder/'b.txt').write_text('实习附件需核对。','utf8');self.store.register_import(self.obj['id'],folder)
+        j=self.run_job();self.assertEqual(j['status'],'completed',j['error']);self.assertEqual(j['asset_summary'],{'selected':2,'unique':1,'duplicate':1})
+        self.assertEqual(len(self.model.calls),3)
+        before=len(self.model.calls);j=self.run_job();self.assertEqual(j['status'],'completed',j['error']);self.assertEqual(len(self.model.calls),before)

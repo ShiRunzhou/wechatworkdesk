@@ -185,7 +185,7 @@ def make_server(store, port=8770, pipeline=None, website=None):
                 match=re.fullmatch(f'/api/pipeline/jobs/{ID}/(retry|stop|search|read|submit)',path)
                 if match:
                     jid,action=match[1],match[2]
-                    if action=='retry':return self.send(202,pipeline.retry(jid))
+                    if action=='retry':return self.send(202,pipeline.retry(jid,limits=payload.get('limits')))
                     if action=='stop':return self.send(200,pipeline.stop(jid))
                     if action=='submit':return self.send(200,pipeline.submit(jid,payload))
                     return self.send(200,pipeline.retrieve(jid,payload,action=='read'))

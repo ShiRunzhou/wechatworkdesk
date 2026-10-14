@@ -18,7 +18,7 @@ else:
 
 TEXT={'.md','.txt','.csv','.tsv','.json'}
 IMAGES={'.png','.jpg','.jpeg','.webp','.gif'}
-OFFICE={'.docx','.xlsx','.pptx'}
+OFFICE={'.docx','.xlsx','.pptx','.doc','.xls'}
 
 def extract(path):
     path=Path(path);ext=path.suffix.lower()
@@ -29,6 +29,21 @@ def extract(path):
             try:return data.decode(encoding),'文本'
             except UnicodeError:continue
         raise DeskError('无法识别文本编码')
+    if ext=='.doc':
+        import shutil
+        executable=shutil.which('antiword')
+        if not executable:raise DeskError('旧版Word文字读取组件不可用，可由Agent读取')
+        proc=subprocess.run([executable,str(path)],capture_output=True,timeout=45,env={**os.environ,'LC_ALL':'C.UTF-8'})
+        if proc.returncode:raise DeskError('旧版Word文字提取失败，可能为加密或不兼容文档')
+        return proc.stdout.decode('utf8'),'旧版Word正文；图片、版式和批注未核验'
+    if ext=='.xls':
+        try:import xlrd
+        except ImportError:raise DeskError('旧版Excel读取组件不可用，可由Agent读取') from None
+        book=xlrd.open_workbook(path);parts=[]
+        for sheet in book.sheets():
+            parts.append('['+sheet.name+']')
+            for row in range(sheet.nrows):parts.append(' | '.join(f'{i+1}: {sheet.cell_value(row,i)}' for i in range(sheet.ncols)))
+        return '\n'.join(parts),'旧版Excel单元格值；图表、批注和公式计算未核验'
     if ext in OFFICE:
         with zipfile.ZipFile(path) as z:
             if sum(i.file_size for i in z.infolist())>64*1024**2:raise DeskError('文档解压后过大，未读取')

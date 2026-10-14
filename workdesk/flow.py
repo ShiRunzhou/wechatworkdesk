@@ -93,7 +93,7 @@ class Pipeline:
             if run['state']=='published':
                 j.update(status='completed',phase='Agent结果已提交',results=self._published_result(j['run_id']))
                 self._mark_processed(j);self.save(j)
-        return {k:v for k,v in j.items() if k not in ('config','cache_candidates')}
+        return {**{k:v for k,v in j.items() if k not in ('config','cache_candidates')},'budget_limits':{k:j['config'].get(k) for k in ('max_model_calls','max_total_tokens')}}
     def jobs(self):
         paths=sorted((self.root/'jobs').glob('*/state.json'),key=lambda p:p.stat().st_mtime,reverse=True) if (self.root/'jobs').exists() else []
         return [self.public_job(p.parent.name) for p in paths[:20]]
@@ -137,7 +137,7 @@ class Pipeline:
         if self.running:raise DeskError('已有任务运行中')
         self.running=jid;self.cancel_events[jid]=threading.Event()
         threading.Thread(target=self.run,args=(jid,),daemon=True).start()
-    def retry(self,jid,background=True):
+    def retry(self,jid,background=True,limits=None):
         with self.guard:
             j=self.job(jid)
             if j.get('materials_cleaned_at'):raise DeskError('本轮任务资料已清理，请重新上传并创建新的分析任务')
@@ -145,7 +145,12 @@ class Pipeline:
             if 'budget_start' not in j:
                 j['budget_start']={'calls':j.get('request_count',j['analysis_done']),'tokens':j['usage'].get('total_tokens',0)}
                 j['warnings'].append('旧任务接续：原有调用与用量保留在累计统计；追加部分按当前整轮上限控制，此额度不会随再次点击继续而重置。')
-            cfg=config_snapshot(self.settings)
+            if limits is not None:
+                if not isinstance(limits,dict) or set(limits)-{'max_model_calls','max_total_tokens'}:raise DeskError('本任务额度格式错误')
+                for key,(lo,hi) in {'max_model_calls':(1,1000),'max_total_tokens':(1000,10000000)}.items():
+                    if key in limits and (type(limits[key]) is not int or not lo<=limits[key]<=hi):raise DeskError('本任务额度超出允许范围')
+                j['budget_override']={**j.get('budget_override',{}),**limits}
+            cfg={**config_snapshot(self.settings),**j.get('budget_override',{})}
             resume_truncated=bool(j.get('error','') and j['error'].startswith('模型输出被截断'))
             # Capacity/timeout increases do not invalidate already validated results.
             # Model, prompt, segmentation and capability changes still start a new attempt.
@@ -329,12 +334,16 @@ class Pipeline:
         # Other selected conversations provide links, while each conclusion still uses its object's evidence.
         current['related_selected_objects']=[{'object_id':o['id'],'name':o['name'],'matters':[{'dedup_key':m['dedup_key'],'title':m['title'],'reference_code':m['reference_code']} for m in o['existing_matters']]} for o in ctx['objects'] if o['id']!=oid]
         return current
-    def _messages(self,j,ctx,oid,parts,draft=None,images=None):
+    def _messages(self,j,ctx,oid,parts,draft=None,images=None,verify=True):
         material=[]
         for p in parts:
             material.append(f"source_id={p['source_id']} object_id={p['object_id']} {p['relative_path']} 第{p['start_line']}至{p['end_line']}行\n{p['text']}")
         user={'goal':ctx['run']['goal'],'context':self._model_context(ctx,oid),'materials':material,
-              'draft_to_verify':draft or [],'material_gaps':ctx['pipeline']['update_gaps']}
+              'draft_to_verify':draft or [] if verify else [],'material_gaps':ctx['pipeline']['update_gaps']}
+        if draft and not verify:
+            fields=('dedup_key','title','deadline','owner','action','detail','questions')
+            user['context']['current_candidates']=[{k:str(m.get(k,''))[:500] for k in fields} for m in draft]
+            user['stage_instruction']='只提取当前附件引起的新增或实质变化事项。current_candidates只是已提取事项的简要索引，沿用相同dedup_key；不要重复输出未变化的事项，也不要将简要索引当作完整原文。最终合并核对会单独进行。'
         query=' '.join(m.get('title','') for m in draft or [])[:180]
         if not query and parts:query=' '.join(re.findall(r'实习|课程|申报|竞赛|转达|报销|讲座',parts[0]['text'])[:8])
         user['historical_lookup']=self.store.search_memory(query,oid,4) if query else []
@@ -370,7 +379,7 @@ class Pipeline:
                 for sid,_ in images or []:pool.ledger[sid]={'ranges':[],'total_lines':1,'method':'已向模型提供图片；视觉结论仍需核对'}
                 self._memory_extras(j,oid,obj['result']);return obj['result']
         self._phase(j,'正在分析 '+next(o['name'] for o in ctx['objects'] if o['id']==oid)+f' · 段 {j["analysis_done"]+1}')
-        messages=self._messages(j,ctx,oid,parts,draft,images)
+        messages=self._messages(j,ctx,oid,parts,draft,images,verify=not j['config'].get('efficient_mode',True) or name.endswith('-reconcile') or '-lookup' in name)
         supports_recovery=urlsplit(j['config']['base_url']).hostname=='api.deepseek.com'
         if j.get('resume_truncated') and supports_recovery:
             self._set_truncation_recovery(j,name)
@@ -529,7 +538,17 @@ class Pipeline:
                     candidates=result.get('matters',[]);queries=result.get('lookup_requests',[])
                 self._collect(oid,result,drafts,bgs)
         # Read each selected attachment independently; a long document is fully split, never silently truncated.
-        for sid in ctx['pipeline']['selected_assets']:
+        assets,aliases=self._asset_plan(ctx,pool,self.folder(j['id'])/'attempts'/j['attempt'])
+        j['asset_summary']={'selected':len(ctx['pipeline']['selected_assets']),'unique':len(assets),'duplicate':len(aliases)};j['asset_aliases']=aliases
+        # Valid results of previously paid aliases are retained without calling the model again.
+        for alias in aliases:
+            if alias not in pool.ledger:continue
+            for checkpoint in (self.folder(j['id'])/'attempts'/j['attempt']).glob(alias+'-*.json'):
+                if '.rejected-' in checkpoint.name or '.truncation.' in checkpoint.name:continue
+                result=json.loads(checkpoint.read_text('utf8'))['result'];oid=pool.sources[alias]['object_id']
+                self._validate_segment(result,oid,ctx);self._collect(oid,result,drafts,bgs)
+        self.save(j)
+        for sid in assets:
             s=pool.sources[sid];oid=s['object_id'];ext=Path(s['relative_path']).suffix.lower()
             try:
                 if ext in IMAGES:
@@ -562,6 +581,8 @@ class Pipeline:
             drafts[oid]={};self._collect(oid,checks,drafts,bgs)
         result={'matters':[m for ms in drafts.values() for m in ms.values()],
                 'backgrounds':list(bgs.values()),'coverage':pool.coverage()}
+        for item in result['coverage']:
+            if item['source_id'] in aliases and item['state']=='unread':item['note']='同一会话内文件内容完全一致，复用来源 '+aliases[item['source_id']]+' 的分析；本路径未重复发送给模型。'
         result.update(j.get('memory_extras',{}))
         visible={(m['object_id'],m['title']) for m in result['matters']}
         result['filtered_items']=[i for i in result.get('filtered_items',[]) if (i['object_id'],i.get('title')) not in visible]
@@ -573,6 +594,20 @@ class Pipeline:
         j['results']=self.store.submit(j['run_id'],result)
         self._mark_processed(j)
         j.update(status='completed',phase='分析结果已提交，等待你的判断');self.save(j)
+    @staticmethod
+    def _asset_plan(ctx,pool,folder):
+        groups={};available={p.stem for p in folder.glob('*.json') if '.rejected-' not in p.name and '.truncation.' not in p.name}
+        for sid in ctx['pipeline']['selected_assets']:
+            s=pool.sources[sid];groups.setdefault((s['object_id'],s['sha256']),[]).append(sid)
+        selected=[];aliases={}
+        for group in groups.values():
+            def priority(sid):
+                saved=sum(name.startswith(sid+'-') for name in available)
+                return saved,not pool.sources[sid]['relative_path'].startswith('attachments/')
+            chosen=max(group,key=priority);selected.append(chosen)
+            aliases.update({sid:chosen for sid in group if sid!=chosen})
+        return selected,aliases
+
     @staticmethod
     def _lookup_is_new(hit,sent):
         if any(p['source_id']==hit['source_id'] and p['start_line']<=hit['start_line']<=hit['end_line']<=p['end_line'] for p in sent):return False

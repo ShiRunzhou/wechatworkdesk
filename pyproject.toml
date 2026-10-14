@@ -10,7 +10,7 @@ requires-python = ">=3.12"
 dependencies = []
 
 [project.optional-dependencies]
-cloud = ["cryptography>=44"]
+cloud = ["cryptography>=44", "pypdf>=5,<7", "xlrd>=2,<3"]
 voice = ["sherpa-onnx>=1.13,<2", "numpy>=2,<3"]
 
 [project.scripts]
