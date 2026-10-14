@@ -93,7 +93,7 @@ class Pipeline:
             if run['state']=='published':
                 j.update(status='completed',phase='Agent结果已提交',results=self._published_result(j['run_id']))
                 self._mark_processed(j);self.save(j)
-        return {**{k:v for k,v in j.items() if k not in ('config','cache_candidates')},'budget_limits':{k:j['config'].get(k) for k in ('max_model_calls','max_total_tokens')}}
+        return {**{k:v for k,v in j.items() if k not in ('config','cache_candidates')},'budget_limits':{k:j['config'].get(k,default) for k,default in (('max_model_calls',60),('max_total_tokens',300000))}}
     def jobs(self):
         paths=sorted((self.root/'jobs').glob('*/state.json'),key=lambda p:p.stat().st_mtime,reverse=True) if (self.root/'jobs').exists() else []
         return [self.public_job(p.parent.name) for p in paths[:20]]
