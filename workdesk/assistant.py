@@ -1,5 +1,6 @@
 """Device-only export and upload assistant. No local matter database."""
 import base64
+import copy
 import json
 import os
 import re
@@ -155,15 +156,17 @@ class Assistant:
         cache=self.root/'contacts.json'
         if cache.exists():
             data=json.loads(cache.read_text('utf8'));self.catalog=data.get('catalog',{});self.objects=data.get('objects',[])
-        self.jobs_dir=self.root/'jobs';self.jobs_dir.mkdir(exist_ok=True)
+        self.jobs_dir=self.root/'jobs';self.jobs_dir.mkdir(exist_ok=True);self._job_cache={}
         for p in self.jobs_dir.glob('*.json'):
             j=json.loads(p.read_text('utf8'))
             if j['status']=='running':j['status']='interrupted';j['phase']='程序重启，可重试未完成部分';atomic_json(p,j)
+            self._job_cache[j['id']]=j
 
     def public(self):
         from .local_voice import status
-        return {'config':self.config,'sessions':list(self.catalog.values()),'objects':self.objects,
-                'password_set':bool(self.password),'voice_status':status(self.config),'jobs':sorted([json.loads(p.read_text('utf8')) for p in self.jobs_dir.glob('*.json')],key=lambda j:j['created_at'],reverse=True)[:30]}
+        with self.lock:
+            return copy.deepcopy({'config':self.config,'sessions':list(self.catalog.values()),'objects':self.objects,
+                'password_set':bool(self.password),'voice_status':status(self.config),'jobs':sorted(self._job_cache.values(),key=lambda j:j['created_at'],reverse=True)[:30]})
 
     def save(self,p):
         with self.lock:
@@ -238,7 +241,9 @@ class Assistant:
             return self.public()
 
     def save_job(self,j):
-        with self.lock:atomic_json(self.jobs_dir/(j['id']+'.json'),j)
+        with self.lock:
+            self._job_cache[j['id']]=copy.deepcopy(j)
+            atomic_json(self.jobs_dir/(j['id']+'.json'),j)
 
     def start(self,p,background=True):
         with self.lock:
@@ -246,7 +251,8 @@ class Assistant:
             if p.get('retry'):
                 jid=p['retry']
                 if not re.fullmatch('[a-f0-9]{32}',str(jid)):raise ValueError('任务编号无效')
-                j=json.loads((self.jobs_dir/(jid+'.json')).read_text('utf8'))
+                if jid not in self._job_cache:raise ValueError('未找到任务')
+                j=copy.deepcopy(self._job_cache[jid])
                 if j['status']=='completed':raise ValueError('本次更新已经完成')
             else:
                 selected=p.get('selection',[])
@@ -258,10 +264,15 @@ class Assistant:
                    'mode':mode,'export_directory':self.config['export_directory'],'weflow_config':self.config['weflow_config'],
                    'website':self.config['website'],'username':self.config['username'],'status':'running','phase':'开始更新','conversations':[],'analysis_job':None}
             if j['website']!=self.config['website'] or j['username']!=self.config['username']:raise ValueError('重试须使用原网站和账号')
-            j['status']='running';self.running=True;self.save_job(j)
+            j['status']='running';self.running=True
+            try:self.save_job(j)
+            except OSError:
+                self.running=False;j.update(status='partial',phase='任务日志无法保存，请检查文件占用或磁盘权限后重试')
+                self._job_cache[j['id']]=copy.deepcopy(j)
+                raise
             if background:threading.Thread(target=self.run,args=(j,),daemon=True).start()
             else:self.run(j)
-            return j
+            return copy.deepcopy(j)
 
     def run(self,j):
         try:
@@ -323,7 +334,12 @@ class Assistant:
         except (ValueError,RuntimeError,OSError,KeyError):
             j['status']='partial';j['phase']='未完成，请检查连接后重试；已导出和上传的部分保留'
         finally:
-            with self.lock:self.running=False;self.save_job(j)
+            with self.lock:
+                self.running=False
+                try:self.save_job(j)
+                except OSError:
+                    j.update(status='partial',phase='任务日志无法保存，请检查文件占用或磁盘权限后重试；已完成部分保留')
+                    self._job_cache[j['id']]=copy.deepcopy(j)
 
 
 def make_server(assistant,port=8771):

@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import threading
+import time
 from urllib.parse import urlsplit
 import uuid
 from .store import DeskError
@@ -24,7 +25,14 @@ def atomic_json(path,value):
     try:
         with temp.open('w',encoding='utf8') as f:
             json.dump(value,f,ensure_ascii=False,indent=2);f.flush();os.fsync(f.fileno())
-        os.replace(temp,path)
+        # Windows readers and antivirus may briefly hold a replace-denying handle.
+        # Retry only the atomic local rename; never replay exports or network calls.
+        for attempt in range(7):
+            try:
+                os.replace(temp,path);break
+            except PermissionError as exc:
+                if getattr(exc,'winerror',None) not in (5,32,33) or attempt==6:raise
+                time.sleep(.02*(2**attempt))
     finally:temp.unlink(missing_ok=True)
 
 def protect(value, decrypt=False):

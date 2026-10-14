@@ -117,5 +117,43 @@ class AssistantTests(unittest.TestCase):
         self.assertEqual(e.exception.code,403)
         req=request.Request(url+'/api/contacts',data=b'{}',headers={'Content-Type':'application/json','Origin':url})
         with request.urlopen(req) as r:self.assertEqual(r.status,200)
+    def test_polling_uses_snapshot_without_opening_job_files(self):
+        from unittest.mock import patch
+        j=self.a.start({'selection':['alice'],'mode':'export'},False)
+        with patch('workdesk.local_voice.status',return_value={}),patch.object(Path,'read_text',side_effect=AssertionError('Job files must not be reopened on polling')):
+            state=self.a.public()
+        state['jobs'][0]['status']='modified-by-caller'
+        self.assertEqual(self.a.public()['jobs'][0]['status'],'completed')
+    def test_unwritable_progress_does_not_leave_running_task(self):
+        from unittest.mock import patch
+        with patch('workdesk.assistant.atomic_json',side_effect=PermissionError('locked')):
+            with self.assertRaises(PermissionError):self.a.start({'selection':['alice'],'mode':'export'},False)
+        self.assertFalse(self.a.running)
+        self.assertEqual(self.a.public()['jobs'][0]['status'],'partial')
+    def test_final_progress_write_failure_is_visible_and_retryable(self):
+        from unittest.mock import patch
+        j=self.a.start({'selection':['alice'],'mode':'export'},False)
+        self.a.running=True
+        with patch('workdesk.assistant.atomic_json',side_effect=PermissionError('locked')):
+            self.a.run(j)
+        self.assertFalse(self.a.running)
+        self.assertEqual(self.a.public()['jobs'][0]['status'],'partial')
+    def test_atomic_rename_retries_transient_windows_file_lock(self):
+        from unittest.mock import patch
+        from workdesk.flow_config import atomic_json
+        import os
+        fail=PermissionError('sharing violation');fail.winerror=32
+        with patch('workdesk.flow_config.os.replace',side_effect=[fail,None]) as replace,patch('workdesk.flow_config.time.sleep'):
+            atomic_json(self.root/'state.json',{'ok':True})
+        self.assertEqual(replace.call_count,2)
+    def test_atomic_rename_permanent_error_keeps_existing_file(self):
+        from unittest.mock import patch
+        from workdesk.flow_config import atomic_json
+        p=self.root/'state.json';p.write_text('{"old":true}')
+        fail=PermissionError('locked');fail.winerror=5
+        with patch('workdesk.flow_config.os.replace',side_effect=fail),patch('workdesk.flow_config.time.sleep'):
+            with self.assertRaises(PermissionError):atomic_json(p,{'new':True})
+        self.assertEqual(json.loads(p.read_text()),{'old':True})
+        self.assertFalse(list(self.root.glob('.write-*')))
 
 if __name__=='__main__':unittest.main()
