@@ -87,6 +87,36 @@ class FlowTests(unittest.TestCase):
         self.flow.settings.save({'model':'different-model'})
         retry=self.flow.retry(j['id'],background=False)
         self.assertNotEqual(retry['attempt'],attempt);self.assertEqual(retry['analysis_done'],0)
+    def test_deepseek_truncation_recovers_only_failed_call_and_keeps_global_mode(self):
+        from workdesk.model_api import TruncatedOutput
+        self.flow.settings.save({'base_url':'https://api.deepseek.com','extra_parameters':{'thinking':{'type':'enabled'},'reasoning_effort':'low'},'json_mode':True})
+        model=FakeModel();configs=[];failure={'count':0}
+        class Adapter:
+            def __init__(self,c):self.c=c
+            def complete(self,messages):
+                configs.append(copy.deepcopy(self.c))
+                if self.c['extra_parameters']['thinking']['type']=='enabled' and not failure['count']:
+                    failure['count']+=1;raise TruncatedOutput({'message':{'content':''}},{'total_tokens':99,'completion_tokens_details':{'reasoning_tokens':80}})
+                return model.complete(messages)
+        self.flow.provider_factory=lambda c,k:Adapter(c)
+        j=self.run_job();self.assertEqual(j['status'],'completed',j.get('error'))
+        self.assertEqual(len(j['recovery_calls']),1);self.assertTrue(j['warnings'])
+        self.assertEqual(configs[1]['extra_parameters']['thinking']['type'],'disabled')
+        self.assertFalse(configs[1]['json_mode'])
+        self.assertEqual(self.flow.settings.public()['extra_parameters']['thinking']['type'],'enabled')
+        self.assertEqual(j['usage']['total_tokens'],119)
+    def test_explicit_retry_of_truncated_step_does_not_repeat_failed_thinking(self):
+        self.model.fail_after=2;j=self.run_job();raw=self.flow.job(j['id']);raw['error']='模型输出被截断';self.flow.save(raw)
+        self.flow.settings.save({'base_url':'https://api.deepseek.com','extra_parameters':{'thinking':{'type':'enabled'}}})
+        # Freeze these settings as if this was the failed request's original provider.
+        raw=self.flow.job(j['id']);from workdesk.flow import config_snapshot
+        raw['config']=config_snapshot(self.flow.settings);self.flow.save(raw)
+        used=[];self.model.fail_after=None
+        self.flow.provider_factory=lambda c,k:(used.append(copy.deepcopy(c)) or self.model)
+        self.flow.retry(j['id'],background=False);self.flow.run(j['id'])
+        self.assertEqual(self.flow.job(j['id'])['status'],'completed')
+        self.assertEqual(used[-1]['extra_parameters']['thinking']['type'],'disabled')
+        self.assertEqual(len(self.model.calls),3)
     def test_wrong_object_rejected_then_retry_regenerates_segment(self):
         original=self.model.complete
         def wrong(messages):

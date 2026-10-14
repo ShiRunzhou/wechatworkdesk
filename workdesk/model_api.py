@@ -6,6 +6,13 @@ import ssl
 from urllib import request,error,parse
 from .store import DeskError
 
+class TruncatedOutput(DeskError):
+    def __init__(self,choice,usage):
+        super().__init__('模型输出被截断；可提高输出上限后继续本任务，已完成结果会保留；若改动分段大小则需重新分析')
+        self.usage=usage if isinstance(usage,dict) else {}
+        self.details={'finish_reason':'length','content_chars':len(choice.get('message',{}).get('content') or ''),
+                      'reasoning_tokens':self.usage.get('completion_tokens_details',{}).get('reasoning_tokens')}
+
 class NoRedirect(request.HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs):return None
 
@@ -54,7 +61,7 @@ class ModelAPI:
         obj=self._request('/chat/completions',payload)
         try:
             choice=obj['choices'][0]
-            if choice.get('finish_reason')=='length':raise DeskError('模型输出被截断；可提高输出上限后继续本任务，已完成结果会保留；若改动分段大小则需重新分析')
+            if choice.get('finish_reason')=='length':raise TruncatedOutput(choice,obj.get('usage',{}))
             content=choice['message']['content']
             if not isinstance(content,str):raise KeyError()
             return parse_result(content),obj.get('usage',{})

@@ -30,4 +30,3 @@ Python 3.12 容器运行为 UID10001，绑定服务器本机127.0.0.1:8770；600
 # 不打断分析的页面更新
 
 域名Nginx配置可将更新页面及其JS/CSS指向 `/opt/wechatworkdesk-web/current`，并通过内部 `/api/health` 子请求验证相同网站登录。更新静态文件后检查Nginx配置并平滑重载，不重启分析容器。每次后续发布应同步复制同版本的 `update.html`、`update.js`、`update.css` 并切换current链接，防止静态界面与容器代码版本不一致。页面与静态资源仍须登录。
-
