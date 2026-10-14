@@ -137,10 +137,13 @@ class Pipeline:
             if j.get('materials_cleaned_at'):raise DeskError('本轮任务资料已清理，请重新上传并创建新的分析任务')
             if self.running or j['status'] not in ('failed','paused','cancelled'):raise DeskError('此任务当前不能继续')
             cfg=config_snapshot(self.settings)
-            # Keep frozen materials; changing model settings starts a fresh analysis attempt.
+            # Capacity/timeout increases do not invalidate already validated results.
+            # Model, prompt, segmentation and capability changes still start a new attempt.
             if cfg!=j['config']:
+                changed={k for k in set(cfg)|set(j['config']) if cfg.get(k)!=j['config'].get(k)}
                 j['config']={**cfg,'material_roots':j['config']['material_roots'],'default_goal':j['config']['default_goal']}
-                j.update(attempt=uuid.uuid4().hex,ledger={},analysis_done=0,memory_extras={'rule_suggestions':[],'filtered_items':[]})
+                if not changed.issubset({'max_tokens','timeout'}):
+                    j.update(attempt=uuid.uuid4().hex,ledger={},analysis_done=0,memory_extras={'rule_suggestions':[],'filtered_items':[]})
             j.update(status='queued',error=None);self.save(j)
             if j.get('run_id'):
                 with self.store.connect() as con:con.execute("UPDATE runs SET state='reading' WHERE id=? AND state='cancelled'",(j['run_id'],))

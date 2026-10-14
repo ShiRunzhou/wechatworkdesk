@@ -54,7 +54,7 @@ class ModelAPI:
         obj=self._request('/chat/completions',payload)
         try:
             choice=obj['choices'][0]
-            if choice.get('finish_reason')=='length':raise DeskError('模型输出被截断；请增大输出长度或减小每段材料后新建任务')
+            if choice.get('finish_reason')=='length':raise DeskError('模型输出被截断；可提高输出上限后继续本任务，已完成结果会保留；若改动分段大小则需重新分析')
             content=choice['message']['content']
             if not isinstance(content,str):raise KeyError()
             return parse_result(content),obj.get('usage',{})

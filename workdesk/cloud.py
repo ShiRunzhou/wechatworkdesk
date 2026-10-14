@@ -186,7 +186,7 @@ class CloudPipeline(Pipeline):
                      error=None, ledger={}, usage={}, results=None, cloud_upload=True)
             ctx['pipeline'] = dict(job_id=j['id'], selected_range=[j['start'],j['end']] if window else [], summary=summary, primary_sources=primary,
                                    selected_assets=range_assets if window else [s['id'] for s in ctx['sources'] if s['id'] in latest_ids and s['id'] not in primary],
-                                   background_sources=[], update_gaps=[])
+                                   background_sources=[s['id'] for s in ctx['sources'] if s['relative_path'].startswith('background/') and not s.get('cleaned_at')], update_gaps=[])
             folder = self.folder(j['id'])
             atomic_json(folder/'context.json', ctx)
             (folder/'agent-request.md').write_text(

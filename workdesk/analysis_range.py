@@ -37,7 +37,7 @@ def freeze_window(store,oid,start,end):
         rows=[dict(r) for r in con.execute("SELECT * FROM sources WHERE object_id=? AND cleaned_at='' ORDER BY created_at DESC,rowid DESC",(oid,))]
     blocks=[];seen=set();assets=set();unknown=[]
     for source in rows:
-        if source['relative_path'].startswith('analysis/') or not source['relative_path'].lower().endswith('.md'):continue
+        if source['relative_path'].startswith(('analysis/','background/')) or not source['relative_path'].lower().endswith('.md'):continue
         file=Path(source['snapshot_path'])
         if not file.is_file():continue
         text=file.read_text('utf-8-sig');headers=[m for m in re.finditer(r'^##\s+(.+)$',text,re.M) if re.match(r'\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}:\d{2}',m[1].replace('\\-','-'))];dated=False

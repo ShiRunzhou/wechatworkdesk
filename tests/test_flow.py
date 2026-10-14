@@ -75,6 +75,18 @@ class FlowTests(unittest.TestCase):
         self.model.fail_after=None;self.flow.retry(j['id'],background=False);self.flow.run(j['id']);j=self.flow.public_job(j['id'])
         self.assertEqual(j['status'],'completed',j.get('error'));self.assertEqual(len(self.model.calls),3)
         self.assertEqual(len(self.store.dashboard()['matters']),1)
+    def test_increased_output_budget_retains_valid_checkpoint_attempt(self):
+        self.model.fail_after=2;j=self.run_job();attempt=j['attempt'];done=j['analysis_done']
+        self.flow.settings.save({'max_tokens':32768,'timeout':300})
+        retry=self.flow.retry(j['id'],background=False)
+        self.assertEqual(retry['attempt'],attempt);self.assertEqual(retry['analysis_done'],done)
+        self.model.fail_after=None;self.flow.run(j['id'])
+        self.assertEqual(self.flow.job(j['id'])['status'],'completed');self.assertEqual(len(self.model.calls),3)
+    def test_changed_model_invalidates_previous_attempt(self):
+        self.model.fail_after=2;j=self.run_job();attempt=j['attempt']
+        self.flow.settings.save({'model':'different-model'})
+        retry=self.flow.retry(j['id'],background=False)
+        self.assertNotEqual(retry['attempt'],attempt);self.assertEqual(retry['analysis_done'],0)
     def test_wrong_object_rejected_then_retry_regenerates_segment(self):
         original=self.model.complete
         def wrong(messages):

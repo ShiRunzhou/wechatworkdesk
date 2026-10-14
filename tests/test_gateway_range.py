@@ -53,6 +53,14 @@ class RangeTests(unittest.TestCase):
         self.flow.upload(self.md,'chat.md',self.obj['id'])
         primary,_,_,_=freeze_window(self.store,self.obj['id'],*bounds(self.scope()))
         self.assertIn('正文末尾',self.store.source(primary[0])[1].read_text('utf8'))
+    def test_background_files_are_context_not_new_message_primary(self):
+        folder=self.root/'background';folder.mkdir();bg=folder/'profile.md';bg.write_text('专业主任工作背景。','utf8')
+        self.store.register_materials(self.obj['id'],[('background/profile.md',bg)])
+        j=self.flow.create({'sessions':[self.obj['id']],'mode':'agent',**self.scope()},False)
+        ctx=self.flow.context(j['id'])
+        self.assertEqual(len(ctx['pipeline']['primary_sources']),1)
+        self.assertEqual(len(ctx['pipeline']['background_sources']),1)
+        self.assertFalse(j['warnings'])
 
 
 class GatewayTests(unittest.TestCase):
