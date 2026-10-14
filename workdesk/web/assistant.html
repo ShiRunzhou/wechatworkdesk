@@ -3,10 +3,11 @@
 <main><p id="notice" role="status"></p>
 <details><summary>本设备与网站设置</summary><div class="grid">
 <label>WeFlow 配置文件<input id="weflow_config"></label><label>本机导出目录<input id="export_directory"></label>
+<label>WeFlow 程序路径（可选）<input id="weflow_executable" placeholder="例如 D:\weflow\WeFlow.exe"><small>如程序目录包含模型，也会自动检查；通常只需配置上面的 WeFlow 配置文件。</small></label>
 <label>网站地址<input id="website" type="url"></label><label>登录账号<input id="username" autocomplete="username"></label>
 <label>网站密码<input id="password" type="password" autocomplete="current-password"><small>仅保存在本次助手运行的内存中，重启后重新填写。</small></label></div>
 <button id="save">保存设置</button><button id="connect">检查网站连接</button></details>
-<details><summary>语音转写设置（可选）</summary><p>优先复用已有转写；缺失时可使用兼容音频转写接口。音频仅用于转写，不保留到导出目录或上传网站。</p><div class="grid"><label>转写基础地址<input id="stt_url" placeholder="http://127.0.0.1:8000/v1"></label><label>模型名称<input id="stt_model" placeholder="whisper-1"></label><label>接口密钥<input id="stt_key" type="password"><small>仅保存在运行内存中。</small></label></div><button id="saveStt">保存转写设置</button></details>
+<details><summary>语音转写设置</summary><p>默认复用 WeFlow 已下载的本地模型，已有转写优先使用。音频仅在内存中识别，不保留到导出目录或上传网站。</p><label>转写方式<select id="voice_mode"><option value="local">本地模型（自动识别 WeFlow 模型目录）</option><option value="api">使用转写 API</option><option value="cache">仅复用已有转写，不补转缺失语音</option></select></label><p id="voiceStatus"></p><label>模型目录覆盖（可选）<input id="voice_model_directory" placeholder="留空：根据本机 WeFlow 设置自动寻找"><small>无需每台电脑手工填写；只有自动识别失败时才填写。</small></label><div id="apiVoice" class="grid" hidden><label>转写基础地址<input id="stt_url" placeholder="http://127.0.0.1:8000/v1"></label><label>模型名称<input id="stt_model" placeholder="whisper-1"></label><label>接口密钥<input id="stt_key" type="password"><small>仅保存在运行内存中。</small></label></div><button id="saveStt">保存并检查转写设置</button></details>
 <section><h2>1 · 选择联系人和群</h2><button id="refresh">读取／刷新列表</button><input id="search" placeholder="搜索名称或微信标识"><select id="kind"><option value="">全部</option><option value="person">联系人</option><option value="group">群</option><option value="selected">已勾选</option></select><button id="selectVisible">勾选搜索结果</button><button id="clear">清空选择</button>
 <p><span id="selectionCount">已选择 0 个</span> · 单次最多 50 个；列表最多显示前 200 个，已勾选优先，请用搜索缩小范围。</p><div id="contacts"></div>
 <div class="row"><select id="presets"><option value="">选择常用范围</option></select><input id="presetName" placeholder="常用范围名称"><button id="savePreset">保存当前选择</button></div>

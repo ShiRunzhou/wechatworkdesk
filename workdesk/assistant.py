@@ -22,6 +22,10 @@ class VoiceClient(Client):
     def __init__(self, config, scope, stt, key, cache):
         super().__init__(config,scope);self.stt=stt;self.stt_key=key;self.cache=Path(cache)/self.account
         self.cache.mkdir(parents=True,exist_ok=True)
+        self.local_voice=None
+        if stt.get('voice_mode')=='local':
+            from .local_voice import LocalVoice
+            self.local_voice=LocalVoice(stt)
     def page(self,talker,start,end,offset,limit):
         page=self.get('/api/v1/messages',dict(talker=talker,start=start,end=end,offset=offset,limit=limit,media=1,image=1,voice=1,video=0,emoji=0))
         for m in page.get('messages',[]):
@@ -33,6 +37,11 @@ class VoiceClient(Client):
             try:
                 audio=self.media(m['mediaUrl']);name=Path(m.get('mediaFileName') or 'voice.wav').name
                 if not audio or len(audio)>25*1024**2:continue
+                if getattr(self,'local_voice',None):
+                    text=self.local_voice.transcribe(audio)
+                    if text:
+                        self.transcripts[key]=text;atomic_json(p,{'text':text,'engine':'sensevoice-local'})
+                    continue
                 boundary='wcwd'+uuid.uuid4().hex
                 if '\r' in name or '\n' in name or '"' in name:continue
                 parts=[f'--{boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\n{self.stt["stt_model"]}\r\n'.encode(),
@@ -140,7 +149,8 @@ class Assistant:
         self.config={'website':'https://desk.plantisland.cn','username':'shirunzhou',
             'weflow_config':str(Path(os.environ.get('APPDATA',str(Path.home())))/'weflow/WeFlow-config.json'),
             'export_directory':str(Path('E:/wechatrecord') if Path('E:/wechatrecord').is_dir() else Path.home()/'Documents/WeChatWorkDesk/wechatrecord'),
-            'selection':list(SCOPE),'presets':{},'mapping':{},'stt_url':'','stt_model':''}
+            'selection':list(SCOPE),'presets':{},'mapping':{},'stt_url':'','stt_model':'',
+            'voice_mode':'local','voice_model_directory':'','weflow_executable':''}
         if self.path.exists():self.config.update(json.loads(self.path.read_text('utf8')))
         cache=self.root/'contacts.json'
         if cache.exists():
@@ -151,8 +161,9 @@ class Assistant:
             if j['status']=='running':j['status']='interrupted';j['phase']='程序重启，可重试未完成部分';atomic_json(p,j)
 
     def public(self):
+        from .local_voice import status
         return {'config':self.config,'sessions':list(self.catalog.values()),'objects':self.objects,
-                'password_set':bool(self.password),'jobs':sorted([json.loads(p.read_text('utf8')) for p in self.jobs_dir.glob('*.json')],key=lambda j:j['created_at'],reverse=True)[:30]}
+                'password_set':bool(self.password),'voice_status':status(self.config),'jobs':sorted([json.loads(p.read_text('utf8')) for p in self.jobs_dir.glob('*.json')],key=lambda j:j['created_at'],reverse=True)[:30]}
 
     def save(self,p):
         with self.lock:
@@ -161,6 +172,15 @@ class Assistant:
                 if k not in p:continue
                 if not isinstance(p[k],str) or not p[k].strip() or len(p[k])>2000:raise ValueError('请填写有效设置')
             candidate={**self.config,**{k:p[k].strip() for k in ('website','username','weflow_config','export_directory') if k in p}}
+            if 'voice_mode' in p:
+                if p['voice_mode'] not in ('local','api','cache'):raise ValueError('转写模式无效')
+                candidate['voice_mode']=p['voice_mode']
+            for k in ('voice_model_directory','weflow_executable'):
+                if k in p:
+                    if not isinstance(p[k],str) or len(p[k])>2000:raise ValueError('模型或程序路径无效')
+                    value=p[k].strip()
+                    if value and not Path(value).is_absolute():raise ValueError('请填写本机完整路径，留空则自动识别')
+                    candidate[k]=value
             for k in ('stt_url','stt_model'):
                 if k in p:
                     if not isinstance(p[k],str) or len(p[k])>2000 or '\n' in p[k] or '\r' in p[k]:raise ValueError('转写配置无效')
@@ -256,7 +276,12 @@ class Assistant:
                     if not row.get('inventory'):
                         j['phase']='正在导出：'+s['name'];self.save_job(j)
                         scope={t:s['name']}
-                        if self.client_factory is Client and self.config.get('stt_url') and self.config.get('stt_model'):
+                        voice_mode=self.config.get('voice_mode','local')
+                        if self.client_factory is Client and voice_mode=='local':
+                            from .local_voice import status
+                            found=status(self.config)
+                            if not found['model_found'] or not found['runtime_ready']:raise ValueError('本地模型或转写组件缺失，请查看语音设置；也可选择仅复用已有转写')
+                        if self.client_factory is Client and (voice_mode=='local' or (voice_mode=='api' and self.config.get('stt_url') and self.config.get('stt_model'))):
                             client=VoiceClient(j['weflow_config'],scope,self.config,self.stt_key,self.root/'transcripts')
                         else:client=self.client_factory(j['weflow_config'],scope=scope)
                         from .device_paths import update_state

@@ -358,7 +358,7 @@ class Updater:
         if typ == 34:
             transcript = self._transcript(talker,m,old)
             if transcript:
-                body = '[语音转文字，复用已有导出或 WeFlow 本机转写缓存] ' + transcript
+                body = '[语音转文字] ' + transcript
             else:
                 body += '\n\n[语音转写缺口：接口未提供已核验转写，未导出音频]'
                 result['transcription_gaps'] += 1

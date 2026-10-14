@@ -11,6 +11,7 @@ dependencies = []
 
 [project.optional-dependencies]
 cloud = ["cryptography>=44"]
+voice = ["sherpa-onnx>=1.13,<2", "numpy>=2,<3"]
 
 [project.scripts]
 workdesk = "workdesk.cli:main"
