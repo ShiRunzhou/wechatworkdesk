@@ -1,0 +1,19 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>WCWD 更新助手</title><link rel="stylesheet" href="/assistant.css"></head><body>
+<header><h1>WCWD 更新助手</h1><a id="websiteLink" target="_blank" rel="noreferrer">打开网站工作台 ↗</a><p>选择联系人和群，导出最近记录并上传。事项与处理状态保存在网站。</p><button id="quit">关闭更新助手</button></header>
+<main><p id="notice" role="status"></p>
+<details><summary>本设备与网站设置</summary><div class="grid">
+<label>WeFlow 配置文件<input id="weflow_config"></label><label>本机导出目录<input id="export_directory"></label>
+<label>网站地址<input id="website" type="url"></label><label>登录账号<input id="username" autocomplete="username"></label>
+<label>网站密码<input id="password" type="password" autocomplete="current-password"><small>仅保存在本次助手运行的内存中，重启后重新填写。</small></label></div>
+<button id="save">保存设置</button><button id="connect">检查网站连接</button></details>
+<details><summary>语音转写设置（可选）</summary><p>优先复用已有转写；缺失时可使用兼容音频转写接口。音频仅用于转写，不保留到导出目录或上传网站。</p><div class="grid"><label>转写基础地址<input id="stt_url" placeholder="http://127.0.0.1:8000/v1"></label><label>模型名称<input id="stt_model" placeholder="whisper-1"></label><label>接口密钥<input id="stt_key" type="password"><small>仅保存在运行内存中。</small></label></div><button id="saveStt">保存转写设置</button></details>
+<section><h2>1 · 选择联系人和群</h2><button id="refresh">读取／刷新列表</button><input id="search" placeholder="搜索名称或微信标识"><select id="kind"><option value="">全部</option><option value="person">联系人</option><option value="group">群</option><option value="selected">已勾选</option></select><button id="selectVisible">勾选搜索结果</button><button id="clear">清空选择</button>
+<p><span id="selectionCount">已选择 0 个</span> · 单次最多 50 个；列表最多显示前 200 个，已勾选优先，请用搜索缩小范围。</p><div id="contacts"></div>
+<div class="row"><select id="presets"><option value="">选择常用范围</option></select><input id="presetName" placeholder="常用范围名称"><button id="savePreset">保存当前选择</button></div>
+<p>首次选择某个会话时，请选它对应的网站对象；没有对应对象时可新建。名称相似时不会自行合并。</p></section>
+<section><h2>2 · 设置时间和完成后的操作</h2><div class="grid"><label>时间范围<select id="range"><option value="recent">最近</option><option value="custom">自定义日期</option></select></label><label>最近天数<input id="days" type="number" min="1" max="365" value="7"></label></div>
+<div id="dates" hidden class="grid"><label>开始日期<input id="start" type="text" readonly placeholder="yyyy/mm/dd"><button id="startCalendar" type="button">选择日期</button><input id="startPicker" class="calendar-date" type="date" aria-label="选择开始日期"></label><label>结束日期<input id="end" type="text" readonly placeholder="yyyy/mm/dd"><button id="endCalendar" type="button">选择日期</button><input id="endPicker" class="calendar-date" type="date" aria-label="选择结束日期"></label></div>
+<label>完成后<select id="mode"><option value="upload">上传后由我打开工作台</option><option value="agent">上传后准备 Agent 分析任务</option><option value="api">上传后调用网站已配置的模型分析</option><option value="export">仅导出到本机</option></select></label>
+<p>重复消息跳过，补出的转写仍会纳入本次资料。最近 7 天以点击开始时计算；自定义日期包含开始和结束当天。</p><button id="startUpdate" class="primary">开始更新</button></section>
+<section><h2>3 · 更新结果与日志</h2><p>当前 WeFlow 接口不能自动导出文件附件；会复用已有文件并标记缺失，缺失不等于已读取。</p><div id="jobs"></div></section>
+</main><script src="/assistant.js"></script></body></html>

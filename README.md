@@ -81,3 +81,7 @@ Set-Location -LiteralPath 'D:\WeChatWorkDesk'
 ## 本设备设置与日期范围
 
 WeChatWorkDesk包含更新分析模块和事件处理模块。更新分析模块的分析设置中可配置本设备的WeFlow程序、WeFlow配置文件和聊天资料目录；背景资料目录也可编辑。设备路径保存在本机data/flow/device-paths.json，独立于模型接口，不要求固定盘符。不搬动旧资料，每轮冻结导出目录。自定义日期为北京时间起始日00:00至结束日23:59:59；结束日为今天时截至本次更新时刻，最近7天/30天仍为滚动范围。
+
+## WCWD 电脑更新助手
+
+双击 `启动WCWD更新助手.cmd`，在电脑上选择联系人和群、默认最近7天、增量导出并上传网站。使用说明见 [docs/update-assistant.md](docs/update-assistant.md)。
