@@ -159,9 +159,18 @@ class CloudPipeline(Pipeline):
                 raise DeskError('请先配置模型接口')
             from .analysis_range import bounds,freeze_window
             window=bounds(payload);summary=[];warnings=[];range_primary=[];range_assets=[]
+            from .analysis_cache import signature,load
+            cache=load(self.root);candidates={};old_by_object={}
+            incremental=cfg['incremental_analysis'] and not payload.get('force_analysis',False)
+            for oid in ids:
+                fingerprint=signature(self.store,oid,cfg,supplement)
+                old_by_object[oid]=cache.get(oid+':'+fingerprint,{}) if incremental else {}
+                if old_by_object[oid]:warnings.extend(old_by_object[oid].get('warnings',[]))
+                candidates[oid]={'signature':fingerprint,'messages':{},'sources':{}}
             if window:
                 for oid in ids:
-                    primary,assets,item,notes=freeze_window(self.store,oid,*window)
+                    primary,assets,item,notes=freeze_window(self.store,oid,*window,processed=old_by_object[oid],allow_empty=incremental)
+                    candidates[oid]['messages']=item.pop('message_marks',{})
                     range_primary.extend(primary);range_assets.extend(assets);summary.append(item);warnings.extend(notes)
             goal = cfg['default_goal'] + ('\n只从本轮消息时段提出新增事项：'+window[0].isoformat()+' 至 '+window[1].isoformat()+'。历史资料和已确认记忆用于理解、回查与沿用原事项；不要把范围外的旧通知重新当作新增事项。' if window else '\n本轮分析各对象最近一次上传的完整资料；上传时间不是消息时间。') + supplement
             latest_ids = []
@@ -174,18 +183,30 @@ class CloudPipeline(Pipeline):
                 for oid in ids:
                     con.execute('INSERT OR IGNORE INTO run_imports SELECT ?,id FROM imports WHERE object_id=?',(run['id'],oid))
             ctx = self.store.context(run['id'])
-            primary = [s['id'] for s in ctx['sources'] if s['id'] in latest_ids and Path(s['relative_path']).suffix.lower() == '.md']
+            primary = [s['id'] for s in ctx['sources'] if s['id'] in latest_ids and not s['relative_path'].startswith(('background/','analysis/')) and Path(s['relative_path']).suffix.lower() == '.md']
+            available_primary=bool(primary or range_primary or any(x.get('reused_messages') for x in summary))
             if window:primary=range_primary
-            if not primary:
+            if not window and incremental:
+                before=len(primary)
+                primary=[sid for sid in primary if not any(s['id']==sid and old_by_object[s['object_id']].get('sources',{}).get(s['relative_path'])==s['sha256'] for s in ctx['sources'])]
+                if before>len(primary):warnings.append('已发布且内容未变的聊天资料已复用，无需再次调用模型。')
+            if not available_primary and not (window and any(old_by_object.values())):
                 raise DeskError('所选对象最新资料中没有 Markdown 聊天记录')
             stamp = now()
             j = dict(id=uuid.uuid4().hex, created_at=stamp, mode=mode, start=window[0].isoformat() if window else stamp, end=window[1].isoformat() if window else stamp,
                      selection=[known[i] for i in ids], supplement=supplement, config=cfg,
                      status='queued', phase='等待分析资料', conversations=[], warnings=warnings,
                      run_id=run['id'], attempt=uuid.uuid4().hex, analysis_done=0, analysis_total=0,
-                     error=None, ledger={}, usage={}, results=None, cloud_upload=True)
+                     error=None, ledger={}, usage={}, results=None, cloud_upload=True,cache_candidates=candidates)
+            assets=range_assets if window else [s['id'] for s in ctx['sources'] if s['id'] in latest_ids and s['id'] not in primary and Path(s['relative_path']).suffix.lower()!='.md' and not s['relative_path'].startswith('background/')]
+            if incremental:
+                assets=[sid for sid in assets if not any(s['id']==sid and old_by_object[s['object_id']].get('sources',{}).get(s['relative_path'])==s['sha256'] for s in ctx['sources'])]
+            for s in ctx['sources']:
+                if s['id'] in primary+assets:candidates[s['object_id']]['sources'][s['relative_path']]=s['sha256']
+            reused=sum(x.get('reused_messages',0) for x in summary)
+            if reused:warnings.append(f'复用已发布分析的 {reused} 条相同消息；新增消息、转写或附件变化仍会分析。')
             ctx['pipeline'] = dict(job_id=j['id'], selected_range=[j['start'],j['end']] if window else [], summary=summary, primary_sources=primary,
-                                   selected_assets=range_assets if window else [s['id'] for s in ctx['sources'] if s['id'] in latest_ids and s['id'] not in primary],
+                                   selected_assets=assets,
                                    background_sources=[s['id'] for s in ctx['sources'] if s['relative_path'].startswith('background/') and not s.get('cleaned_at')], update_gaps=[])
             folder = self.folder(j['id'])
             atomic_json(folder/'context.json', ctx)
@@ -206,7 +227,41 @@ class CloudPipeline(Pipeline):
         return  # uploaded snapshots already exist
 
     def _prepare(self, j):
-        return
+        self._check_cache_signature(j)
+        ctx=self.context(j['id'])
+        if not ctx['pipeline']['primary_sources'] and not ctx['pipeline']['selected_assets']:
+            result={'matters':[],'backgrounds':[],'coverage':[{'source_id':s['id'],'state':'unread','note':'本轮复用已发布分析，没有重新读取原文件。'} for s in ctx['sources']]}
+            j['results']=self.store.submit(j['run_id'],result);self._mark_processed(j)
+            j.update(status='completed',phase='相同资料已复用，本轮无需再次分析');self.save(j)
+
+    def _analyse(self,j):
+        self._check_cache_signature(j)
+        return super()._analyse(j)
+
+    def _check_cache_signature(self,j):
+        from .analysis_cache import signature
+        for oid,c in j.get('cache_candidates',{}).items():
+            if c['signature']!=signature(self.store,oid,j['config'],j['supplement']):
+                raise DeskError('准备资料后工作背景或人工反馈已改变，请新建分析以重新核查已跳过的消息；本轮进度仍保留。')
 
     def _mark_processed(self, j):
-        return  # uploads reuse content hashes; desktop message ledgers are independent
+        from .analysis_cache import published,signature
+        if j.get('cache_candidates'):
+            with self.guard:
+                ctx=self.context(j['id']);states={}
+                with self.store.connect() as con:
+                    states={r[0]:r[1] for r in con.execute('SELECT source_id,state FROM coverage WHERE run_id=?',(j['run_id'],))}
+                sources={s['id']:s for s in ctx['sources']};candidates={}
+                for oid,c in j['cache_candidates'].items():
+                    if c['signature']!=signature(self.store,oid,j['config'],j['supplement']):continue
+                    primary=[sid for sid in ctx['pipeline']['primary_sources'] if sources[sid]['object_id']==oid and not sources[sid]['relative_path'].startswith('background/')]
+                    # An Agent may publish partial reading: never mark its unread messages processed.
+                    candidate={**c,'messages':c['messages'] if all(states.get(sid)=='read' for sid in primary) else {},'sources':{},
+                               'warnings':[w for w in j['warnings'] if not w.startswith(('复用','已发布'))]}
+                    for sid in ctx['pipeline']['primary_sources']+ctx['pipeline']['selected_assets']:
+                        s=sources[sid]
+                        if s['object_id']==oid and states.get(sid)=='read':candidate['sources'][s['relative_path']]=s['sha256']
+                        elif s['object_id']==oid and sid in j.get('ledger',{}) and Path(s['relative_path']).suffix.lower() in IMAGES:
+                            candidate['sources'][s['relative_path']]=s['sha256']
+                    candidates[oid]=candidate
+                published(self.root,candidates,j['run_id'])

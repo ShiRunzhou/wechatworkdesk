@@ -45,7 +45,7 @@ class Profiles:
                     else:data['active']=pid
                 selected=next(p for p in data['profiles'] if p['id']==data['active'])
                 current=self.internal()
-                current.update({k:selected[k] for k in keys});current.pop('encrypted_key',None)
+                current.update({k:selected.get(k,DEFAULTS[k]) for k in keys});current.pop('encrypted_key',None)
                 if selected.get('encrypted_key'):current['encrypted_key']=selected['encrypted_key']
                 atomic_json(self.path,current);atomic_json(path,data)
             elif action is not None:raise DeskError('不支持的接口操作')

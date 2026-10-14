@@ -16,6 +16,10 @@ class TruncatedOutput(DeskError):
 class NoRedirect(request.HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs):return None
 
+class InvalidModelOutput(DeskError):
+    def __init__(self,message,usage):
+        super().__init__(message);self.usage=usage if isinstance(usage,dict) else {}
+
 class ModelAPI:
     def __init__(self,config,key=''):
         self.config=config;self.key=key
@@ -64,8 +68,9 @@ class ModelAPI:
             if choice.get('finish_reason')=='length':raise TruncatedOutput(choice,obj.get('usage',{}))
             content=choice['message']['content']
             if not isinstance(content,str):raise KeyError()
-            return parse_result(content),obj.get('usage',{})
-        except (KeyError,IndexError,TypeError):raise DeskError('模型响应缺少可用文字；请核对兼容接口或思考输出设置') from None
+            try:return parse_result(content),obj.get('usage',{})
+            except DeskError as e:raise InvalidModelOutput(str(e),obj.get('usage',{})) from None
+        except (KeyError,IndexError,TypeError):raise InvalidModelOutput('模型响应缺少可用文字；请核对兼容接口或思考输出设置',obj.get('usage',{})) from None
 
 def parse_result(text):
     text=re.sub(r'<think>.*?</think>','',text,flags=re.S).strip()

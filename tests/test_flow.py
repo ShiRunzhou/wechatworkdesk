@@ -89,7 +89,7 @@ class FlowTests(unittest.TestCase):
         self.assertNotEqual(retry['attempt'],attempt);self.assertEqual(retry['analysis_done'],0)
     def test_deepseek_truncation_recovers_only_failed_call_and_keeps_global_mode(self):
         from workdesk.model_api import TruncatedOutput
-        self.flow.settings.save({'base_url':'https://api.deepseek.com','extra_parameters':{'thinking':{'type':'enabled'},'reasoning_effort':'low'},'json_mode':True})
+        self.flow.settings.save({'base_url':'https://api.deepseek.com','extra_parameters':{'thinking':{'type':'enabled'},'reasoning_effort':'low'},'json_mode':True,'efficient_mode':False})
         model=FakeModel();configs=[];failure={'count':0}
         class Adapter:
             def __init__(self,c):self.c=c

@@ -16,7 +16,8 @@ DEFAULT_GOAL = '''围绕我的专业主任工作，分析本次更新的聊天�
 沿用已有事项标识，保留我的人工状态、反馈和编号。发现背景变化时提出完整背景更新建议，等待确认。报告影响结论的未读材料和资料缺口。'''
 DEFAULTS = dict(base_url='',model='',default_goal=DEFAULT_GOAL,context_chars=48000,
     chunk_chars=10000,max_tokens=8192,timeout=180,temperature=0.2,vision=False,
-    json_mode=False,output_parameter='max_tokens',lookup_rounds=2,
+    json_mode=False,output_parameter='max_tokens',lookup_rounds=1,
+    efficient_mode=True,incremental_analysis=True,max_model_calls=60,max_total_tokens=300000,
     material_roots=[],last_selection=[],extra_parameters={})
 
 def atomic_json(path,value):
@@ -98,12 +99,12 @@ class Settings(Profiles):
                 if u.scheme=='http' and u.hostname not in ('127.0.0.1','localhost','::1'):
                     raise DeskError('远程 API 请使用 https')
                 c['base_url']=c['base_url'].rstrip('/')
-            bounds={'context_chars':(16000,300000),'chunk_chars':(2000,30000),'max_tokens':(512,65536),'timeout':(10,600),'lookup_rounds':(0,3)}
+            bounds={'context_chars':(16000,300000),'chunk_chars':(2000,30000),'max_tokens':(512,65536),'timeout':(10,600),'lookup_rounds':(0,3),'max_model_calls':(1,1000),'max_total_tokens':(1000,10000000)}
             for k,(lo,hi) in bounds.items():
                 if type(c[k]) is not int or not lo<=c[k]<=hi:raise DeskError(f'{k} 超出允许范围')
             if c['context_chars']<c['chunk_chars']+8000:raise DeskError('输入材料上限须至少比每段长度多8000字符')
             if type(c['temperature']) not in (int,float) or not 0<=c['temperature']<=2:raise DeskError('temperature 须在0到2之间')
-            for k in ('vision','json_mode'):
+            for k in ('vision','json_mode','efficient_mode','incremental_analysis'):
                 if type(c[k]) is not bool:raise DeskError('模型能力设置须为布尔值')
             if c['output_parameter'] not in ('max_tokens','max_completion_tokens'):raise DeskError('输出长度参数无效')
             if not isinstance(c['material_roots'],list) or len(c['material_roots'])>12 or any(not isinstance(p,str) or len(p)>1000 for p in c['material_roots']):raise DeskError('背景资料最多12个文件或目录')

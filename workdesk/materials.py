@@ -121,11 +121,12 @@ class Pool:
         text,_=self.text(sid);lines=text.splitlines() or [''];start=1
         while start<=len(lines):
             part=self.read(sid,start,len(lines),budget);yield part;start=part['end_line']+1
-    def search(self,query,limit=5):
+    def search(self,query,limit=5,object_id=None,accept=None):
         if not isinstance(query,str) or not query.strip() or len(query)>200:raise DeskError('检索词须为1到200字')
         terms=[x for x in re.split(r'[\s,，;；]+',query.strip()) if x];matches=[]
         documents=0
         for sid,s in self.sources.items():
+            if object_id is not None and s['object_id']!=object_id:continue
             ext=Path(s['relative_path']).suffix.lower()
             path_hit=any(t.lower() in s['relative_path'].lower() for t in terms)
             if ext not in TEXT:
@@ -143,7 +144,7 @@ class Pool:
                 lo=max(1,i-12);hi=min(len(lines),i+22)
                 try:part=self.read(sid,lo,hi,4000)
                 except DeskError:continue
-                matches.append((score,part))
+                if accept is None or accept(part):matches.append((score,part))
         matches.sort(key=lambda x:x[0],reverse=True)
         return [m[1] for m in matches[:max(1,min(limit,8))]]
     def image(self,sid):

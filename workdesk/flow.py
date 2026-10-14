@@ -35,6 +35,11 @@ SYSTEM += '\n可额外输出rule_suggestions列表：每项content、kind(advice
 SYSTEM += '\n按已生效exclude规则不列出的新通知，写入filtered_items列表：object_id、title、rule_id、rule_version、reason、evidence。必须核查例外并引用本轮实际已读资料，不直接标记与我无关，不隐藏已有未完成事项的进度变化。advice规则不能用于过滤。'
 SYSTEM += '\n已生效规则相互冲突时，不静默过滤；列出相关事项并在questions中注明冲突与需要核实之处。'
 
+SYSTEM += '\n简洁提取事实与行动，不为例行通知反复检索。仅在未读原资料会实质改变责任、期限或完成判断时请求补查；已提供材料中的答案不再请求。背景资料只帮助理解，不单独生成旧通知。'
+
+class AnalysisBudget(DeskError):
+    pass
+
 def config_snapshot(settings):
     c=settings.public();return {k:v for k,v in c.items() if k not in ('key_saved','api_ready','last_selection','default_goal_template')}
 
@@ -82,13 +87,13 @@ class Pipeline:
         with self.guard:atomic_json(self.folder(j['id'])/'state.json',j)
     def public_job(self,jid):
         j=self.job(jid)
-        if j.get('materials_cleaned_at'):return {k:v for k,v in j.items() if k!='config'}
+        if j.get('materials_cleaned_at'):return {k:v for k,v in j.items() if k not in ('config','cache_candidates')}
         if j['status']=='waiting_agent' and j.get('run_id'):
             with self.store.connect() as con:run=self.store.one(con,'runs',j['run_id'])
             if run['state']=='published':
                 j.update(status='completed',phase='Agent结果已提交',results=self._published_result(j['run_id']))
                 self._mark_processed(j);self.save(j)
-        return {k:v for k,v in j.items() if k!='config'}
+        return {k:v for k,v in j.items() if k not in ('config','cache_candidates')}
     def jobs(self):
         paths=sorted((self.root/'jobs').glob('*/state.json'),key=lambda p:p.stat().st_mtime,reverse=True) if (self.root/'jobs').exists() else []
         return [self.public_job(p.parent.name) for p in paths[:20]]
@@ -144,7 +149,7 @@ class Pipeline:
             if cfg!=j['config']:
                 changed={k for k in set(cfg)|set(j['config']) if cfg.get(k)!=j['config'].get(k)}
                 j['config']={**cfg,'material_roots':j['config']['material_roots'],'default_goal':j['config']['default_goal']}
-                if not changed.issubset({'max_tokens','timeout'}):
+                if not changed.issubset({'max_tokens','timeout','max_model_calls','max_total_tokens','efficient_mode','incremental_analysis','lookup_rounds'}):
                     j.update(attempt=uuid.uuid4().hex,ledger={},analysis_done=0,recovery_calls=[],memory_extras={'rule_suggestions':[],'filtered_items':[]})
                     resume_truncated=False
             j['resume_truncated']=resume_truncated
@@ -181,11 +186,12 @@ class Pipeline:
             self._update(j)
             if j['mode']=='update':j.update(status='completed',phase='资料更新完成');self.save(j);return
             self._prepare(j)
+            if j['status']=='completed':return
             if j['mode']=='agent':j.update(status='waiting_agent',phase='资料已准备，等待 Agent 分析');self.save(j);return
             self._analyse(j)
         except Exception as e:
             cancelled=bool(self.cancel_events.get(jid) and self.cancel_events[jid].is_set())
-            j.update(status='cancelled' if cancelled else 'failed',error=str(e) if isinstance(e,(DeskError,RuntimeError,ValueError)) else '处理失败：'+type(e).__name__)
+            j.update(status='cancelled' if cancelled else 'paused' if isinstance(e,AnalysisBudget) else 'failed',error=str(e) if isinstance(e,(DeskError,RuntimeError,ValueError)) else '处理失败：'+type(e).__name__)
             if cancelled and j.get('run_id'):
                 with self.store.connect() as con:con.execute("UPDATE runs SET state='cancelled' WHERE id=? AND state!='published'",(j['run_id'],))
             self.save(j)
@@ -312,8 +318,11 @@ class Pipeline:
         return {'parts':parts,'history':history[:8]}
     def _model_context(self,ctx,oid):
         obj=next(o for o in ctx['objects'] if o['id']==oid)
-        current={'object_id':oid,'name':obj['name'],'confirmed_backgrounds':obj['confirmed_backgrounds'],
-                 'existing_matters':obj['existing_matters'],'work_memory':obj.get('work_memory',{})}
+        fields=('id','dedup_key','reference_code','title','detail','notice_at','deadline','owner','action','questions','state','human_note','status_unverified','deferred_until','followup_at')
+        current={'object_id':oid,'name':obj['name'],
+                 'confirmed_backgrounds':[{k:b[k] for k in ('summary','role','uncertainties') if k in b} for b in obj['confirmed_backgrounds']],
+                 'existing_matters':[{k:m[k] for k in fields if k in m} for m in obj['existing_matters']],
+                 'work_memory':obj.get('work_memory',{})}
         # Other selected conversations provide links, while each conclusion still uses its object's evidence.
         current['related_selected_objects']=[{'object_id':o['id'],'name':o['name'],'matters':[{'dedup_key':m['dedup_key'],'title':m['title'],'reference_code':m['reference_code']} for m in o['existing_matters']]} for o in ctx['objects'] if o['id']!=oid]
         return current
@@ -363,30 +372,61 @@ class Pipeline:
         if j.get('resume_truncated') and supports_recovery:
             self._set_truncation_recovery(j,name)
             j['resume_truncated']=False;self.save(j)
-        def chosen_provider():
-            if name not in j.get('recovery_calls',[]):return provider
-            c=copy.deepcopy(j['config']);c['extra_parameters']['thinking']={'type':'disabled'}
-            c['extra_parameters'].pop('reasoning_effort',None);c['json_mode']=False
-            return self.provider_factory(c,self.settings.key())
-        try:result,usage=chosen_provider().complete(messages)
+        def complete():
+            c=copy.deepcopy(j['config']);recovery=name in j.get('recovery_calls',[])
+            if supports_recovery and (recovery or c.get('efficient_mode',True) and not name.endswith('-reconcile')):
+                c['extra_parameters']['thinking']={'type':'disabled'}
+                c['extra_parameters'].pop('reasoning_effort',None)
+            if recovery:c['json_mode']=False
+            if c.get('efficient_mode',True):c['max_tokens']=min(c['max_tokens'],8192)
+            self._budget(j,messages,c,images)
+            selected=provider if c==j['config'] else self.provider_factory(c,self.settings.key())
+            j['request_count']=j.get('request_count',j['analysis_done'])+1;self.save(j)
+            started=time.monotonic()
+            try:
+                answer,usage=selected.complete(messages)
+            except TruncatedOutput as exc:
+                self._account_usage(j,exc.usage);raise
+            except Exception as exc:
+                if hasattr(exc,'usage'):self._account_usage(j,exc.usage)
+                raise
+            finally:
+                j['request_seconds']=j.get('request_seconds',0)+round(time.monotonic()-started,3);self.save(j)
+            self._account_usage(j,usage)
+            return answer,usage
+        try:result,usage=complete()
         except TruncatedOutput as exc:
             atomic_json(folder/(name+'.truncation.json'),{**exc.details,'usage':exc.usage})
-            for key in ('prompt_tokens','completion_tokens','total_tokens'):
-                if isinstance(exc.usage.get(key),int):j['usage'][key]=j['usage'].get(key,0)+exc.usage[key]
-            self.save(j)
             if not supports_recovery or name in j.get('recovery_calls',[]):raise
             self._set_truncation_recovery(j,name);self.save(j)
-            result,usage=chosen_provider().complete(messages)
+            result,usage=complete()
         try:self._validate_segment(result,oid,ctx)
         except DeskError:
             atomic_json(folder/(name+'.rejected-'+uuid.uuid4().hex+'.json'),{'result':result,'usage':usage})
             raise
         atomic_json(checkpoint,{'result':result,'usage':usage});pool.mark(parts)
         for sid,_ in images or []:pool.ledger[sid]={'ranges':[],'total_lines':1,'method':'已向模型提供图片；视觉结论仍需核对'}
-        for key in ('prompt_tokens','completion_tokens','total_tokens'):
-            if isinstance(usage.get(key),int):j['usage'][key]=j['usage'].get(key,0)+usage[key]
         self._memory_extras(j,oid,result)
         j['ledger']=pool.ledger;j['analysis_done']+=1;self.save(j);return result
+
+    def _account_usage(self,j,usage):
+        if not isinstance(usage,dict):return
+        for key in ('prompt_tokens','completion_tokens','total_tokens'):
+            if isinstance(usage.get(key),int):j['usage'][key]=j['usage'].get(key,0)+usage[key]
+        for key,value in [('reasoning_tokens',usage.get('completion_tokens_details',{}).get('reasoning_tokens')),('cached_prompt_tokens',usage.get('prompt_cache_hit_tokens'))]:
+            if isinstance(value,int):j['usage'][key]=j['usage'].get(key,0)+value
+        self.save(j)
+
+    def _budget(self,j,messages,c,images):
+        count=j.get('request_count',j['analysis_done'])
+        if count>=j['config'].get('max_model_calls',60):
+            raise AnalysisBudget('已到本轮模型调用次数上限；进度已保留。提高整轮上限后可继续，不会重复已完成调用。')
+        used=j['usage'].get('total_tokens',0);limit=j['config'].get('max_total_tokens',300000)
+        # Reserve conservatively for the next request. Image tokenization is provider-dependent.
+        chars=sum(len(m['content']) if isinstance(m['content'],str) else sum(len(p.get('text','')) for p in m['content']) for m in messages)
+        remaining=limit-used-chars-2048*len(images or [])
+        if remaining<512:raise AnalysisBudget('已到本轮用量上限或不足以安全发出下一次请求；进度已保留，提高整轮上限后可继续。')
+        c['max_tokens']=min(c['max_tokens'],remaining)
 
     @staticmethod
     def _set_truncation_recovery(j,name):
@@ -440,36 +480,48 @@ class Pipeline:
         pool=Pool(ctx,j['ledger']);provider=self.provider_factory(j['config'],self.settings.key())
         drafts={};bgs={};j['analysis_total']=0;self.save(j)
         for sid in ctx['pipeline']['primary_sources']:
+            if pool.sources[sid]['relative_path'].startswith('background/'):
+                continue  # Older frozen tasks accidentally classified background as new messages.
             oid=pool.sources[sid]['object_id'];drafts.setdefault(oid,{})
             parts=list(pool.chunks(sid,j['config']['chunk_chars']))
             if len(parts)>200:raise DeskError('消息分段超过200，请缩小本次时段')
             j['analysis_total']+=len(parts);self.save(j)
             for idx,part in enumerate(parts):
                 additional=[]
-                for bs in ctx['pipeline']['background_sources']:
+                bg_seen=set();bg_paths=set();bg_size=0
+                for bs in sorted(ctx['pipeline']['background_sources'],key=lambda x:pool.sources[x].get('created_at',''),reverse=True):
                     if pool.sources[bs]['object_id']==oid:
-                        additional.append(pool.read(bs,1,None,min(5000,j['config']['chunk_chars'])))
-                # Deterministic retrieval remains useful when a model asks for no tools/lookups.
-                seen={p['source_id'] for p in additional}|{sid}
-                for term in ('答辩','实习','五定单','出访','工作手册','竞赛','科研','数据采集'):
-                    if term not in part['text']:continue
-                    for hit in pool.search(term,4):
-                        if hit['source_id'] in seen:continue
-                        if sum(len(p['text']) for p in additional)+len(hit['text'])>j['config']['chunk_chars']:continue
-                        additional.append(hit);seen.add(hit['source_id'])
+                        source=pool.sources[bs];stamp=source.get('sha256',bs);path=source['relative_path']
+                        if stamp in bg_seen or path in bg_paths:continue
+                        bg_seen.add(stamp);bg_paths.add(path)
+                        if bg_size>=4000:break
+                        p=pool.read(bs,1,None,min(4000-bg_size,j['config']['chunk_chars']));additional.append(p);bg_size+=len(p['text'])
                 result=self._call(j,ctx,pool,provider,oid,[part]+additional,sid+'-'+str(idx))
                 queries=result.get('lookup_requests',[])
                 candidates=result.get('matters',[])
-                for lookup in range(j['config']['lookup_rounds']):
+                sent=[part]+additional;queried=set()
+                checkpoint_folder=self.folder(j['id'])/'attempts'/j['attempt']
+                # Retain valid supplemental checkpoints from an older, larger lookup setting.
+                saved_rounds=sum((checkpoint_folder/(sid+f'-{idx}-lookup{i}.json')).exists() for i in range(3))
+                for lookup in range(max(j['config']['lookup_rounds'],saved_rounds)):
                     if not queries:break
-                    found=[];seen=set()
+                    found=[];seen=set();existing=(checkpoint_folder/(sid+f'-{idx}-lookup{lookup}.json')).exists()
                     for query in queries[:5]:
-                        for hit in pool.search(query,3):
+                        normalized=query.strip().casefold() if isinstance(query,str) else ''
+                        if not existing and (not normalized or normalized in queried):continue
+                        queried.add(normalized)
+                        for hit in pool.search(query,3,object_id=oid,accept=None if existing else lambda hit:self._lookup_is_new(hit,sent)):
                             key=(hit['source_id'],hit['start_line'],hit['end_line'])
+                            if hit['object_id']!=oid:continue
+                            if not existing and not self._lookup_is_new(hit,sent):continue
                             if key not in seen and sum(len(p['text']) for p in found)+len(hit['text'])<=j['config']['chunk_chars']:
                                 found.append(hit);seen.add(key)
-                    if not found:j['warnings'].append('部分补查未找到资料，结论应保留疑问');break
+                    if not found:
+                        note='补查未找到新的未读材料，已停止重复检索；原有结论和疑问保留。'
+                        if note not in j['warnings']:j['warnings'].append(note)
+                        break
                     result=self._call(j,ctx,pool,provider,oid,[part]+found,sid+f'-{idx}-lookup{lookup}',candidates)
+                    sent.extend(found)
                     candidates=result.get('matters',[]);queries=result.get('lookup_requests',[])
                 self._collect(oid,result,drafts,bgs)
         # Read each selected attachment independently; a long document is fully split, never silently truncated.
@@ -518,6 +570,20 @@ class Pipeline:
         self._mark_processed(j)
         j.update(status='completed',phase='分析结果已提交，等待你的判断');self.save(j)
     @staticmethod
+    def _lookup_is_new(hit,sent):
+        if any(p['source_id']==hit['source_id'] and p['start_line']<=hit['start_line']<=hit['end_line']<=p['end_line'] for p in sent):return False
+        # Derived windows and original exports have different source IDs but often the same messages.
+        def blocks(text):
+            headings=list(re.finditer(r'^##\s+\d{4}[-/]\d{2}[-/]\d{2}[T ]\d{2}:\d{2}:\d{2}.*$',text,re.M));out=set()
+            for i,h in enumerate(headings):
+                block=text[h.start():headings[i+1].start() if i+1<len(headings) else len(text)]
+                block=re.sub(r'^原消息来源ID: [a-f0-9]{32}\s*$', '',block,flags=re.M).strip()
+                out.add(block)
+            return out
+        target=blocks(hit['text'])
+        known=set().union(*(blocks(p['text']) for p in sent))
+        return not target or not all(any(block in provided for provided in known) for block in target)
+    @staticmethod
     def _collect(oid,result,drafts,bgs):
         mapping=drafts.setdefault(oid,{})
         for m in result.get('matters',[]):
@@ -549,6 +615,9 @@ class Pipeline:
                     provided='\n'.join('\n'.join(lines[a-1:b]) for a,b in info['ranges']).replace('\\-','-').replace('T',' ')
                     if stamp[0].replace('T',' ') not in provided:raise DeskError('模型引用时间未出现在提供资料中，本轮未发布')
     def _mark_processed(self,j):
+        if j.get('cloud_upload'):
+            from .cloud import CloudPipeline
+            return CloudPipeline._mark_processed(self,j)
         p=self.folder(j['id'])/'processed-candidate.json'
         if p.exists():
             processed=json.loads(p.read_text('utf8'))

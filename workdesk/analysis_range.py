@@ -32,10 +32,13 @@ def bounds(payload):
     return start,end
 
 
-def freeze_window(store,oid,start,end):
+def freeze_window(store,oid,start,end,processed=None,allow_empty=False):
     with store.connect() as con:
         rows=[dict(r) for r in con.execute("SELECT * FROM sources WHERE object_id=? AND cleaned_at='' ORDER BY created_at DESC,rowid DESC",(oid,))]
-    blocks=[];seen=set();assets=set();unknown=[]
+    blocks=[];seen=set();assets=set();unknown=[];marks={};skipped=0;total=0;skipped_sources=0
+    processed=processed or {}
+    versions={}
+    for row in rows:versions.setdefault(row['relative_path'],row['sha256'])
     for source in rows:
         if source['relative_path'].startswith(('analysis/','background/')) or not source['relative_path'].lower().endswith('.md'):continue
         file=Path(source['snapshot_path'])
@@ -55,10 +58,17 @@ def freeze_window(store,oid,start,end):
             identity=re.search(r'(?:消息标识:\s*|message-key:\s*)([^\s`<>]+)',block)
             key=identity[1] if identity else hashlib.sha256(block.encode()).hexdigest()
             if key in seen:continue
-            seen.add(key);blocks.append((when.timestamp(),block+'\n\n原消息来源ID: '+source['id']))
-            for rel in re.findall(r'!?\[[^\]]*\]\(([^)]+)\)',block):
-                assets.add(posixpath.normpath(posixpath.join(posixpath.dirname(source['relative_path']),unquote(rel))))
-        if not dated and text.strip() and '本轮所选时间没有消息' not in text:unknown.append(source['id'])
+            seen.add(key);total+=1
+            # Changes such as a newly supplied voice transcript must be analysed again.
+            linked=[posixpath.normpath(posixpath.join(posixpath.dirname(source['relative_path']),unquote(rel))) for rel in re.findall(r'!?\[[^\]]*\]\(([^)]+)\)',block)]
+            stamp=hashlib.sha256(json.dumps([block,[(p,versions.get(p,'')) for p in linked]],ensure_ascii=False).encode()).hexdigest();marks[key]=stamp
+            if processed.get('messages',{}).get(key)==stamp:
+                skipped+=1;continue
+            blocks.append((when.timestamp(),block+'\n\n原消息来源ID: '+source['id']))
+            assets.update(linked)
+        if not dated and text.strip() and '本轮所选时间没有消息' not in text:
+            if processed.get('sources',{}).get(source['relative_path'])!=source['sha256']:unknown.append(source['id'])
+            else:skipped_sources+=1
     asset_ids=[];picked=set()
     for row in rows:
         rel=row['relative_path']
@@ -74,5 +84,5 @@ def freeze_window(store,oid,start,end):
     warnings=[]
     if unknown:
         primary.extend(unknown);warnings.append('部分历史Markdown无法识别消息日期，已保留供核查；不能据此断言覆盖所选时段。')
-    if not primary:raise DeskError('所选对象在分析时段内没有可用聊天记录，请先更新该时段或调整范围')
-    return primary,asset_ids,{'object_id':oid,'analysis_messages':len(blocks)},warnings
+    if not primary and not (allow_empty and (skipped or skipped_sources)):raise DeskError('所选对象在分析时段内没有可用聊天记录，请先更新该时段或调整范围')
+    return primary,asset_ids,{'object_id':oid,'analysis_messages':len(blocks),'total_messages':total,'reused_messages':skipped,'message_marks':marks},warnings

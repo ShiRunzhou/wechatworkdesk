@@ -33,6 +33,7 @@
       <p class="muted">本轮重点仅限所选消息时间；历史资料与已确认工作记忆仍用于回查。没有资料不代表没有消息。</p>
     </details>
     <label>本次额外关注什么（可选）<textarea id="supplement" rows="3" maxlength="2000"></textarea></label>
+    <label class="check"><input id="force-analysis" type="checkbox">重新分析已处理资料（通常不勾选）</label><p class="muted">默认复用已发布分析，只处理新增或变化内容；工作规则、人工反馈或分析需求改变后会重新核查。</p>
     <fieldset><legend>分析方式</legend><label class="radio"><input type="radio" name="mode" value="api">网站模型 API</label><label class="radio"><input type="radio" name="mode" value="agent" checked>Agent 分析</label></fieldset>
     <label>模型接口<select id="active-profile"></select></label><p id="model-hint" class="muted"></p><div class="actions"><button class="primary" id="start-job">开始分析</button></div>
   </section>
@@ -61,7 +62,9 @@
     <label>最大输出长度<input name="max_tokens" type="number" min="512" max="65536"></label><label>请求超时（秒）<input name="timeout" type="number" min="10" max="600"></label>
     <label>补查轮数<select name="lookup_rounds"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label><label>输出长度参数<select name="output_parameter"><option value="max_tokens">max_tokens（常见本机服务）</option><option value="max_completion_tokens">max_completion_tokens</option></select></label>
     <label>temperature<input name="temperature" type="number" min="0" max="2" step="0.1"></label>
-  </div></details>
+    <label>本轮最多调用次数<input name="max_model_calls" type="number" min="1" max="1000"></label><label>本轮用量上限（tokens）<input name="max_total_tokens" type="number" min="1000" max="10000000"></label>
+  </div><label class="check"><input name="incremental_analysis" type="checkbox">复用已发布分析，跳过相同资料</label><label class="check"><input name="efficient_mode" type="checkbox">节省模式：DeepSeek普通提取不启用思考，最终核对沿用思考设置</label><p class="muted">节省模式每次输出最多8192 tokens。达到整轮上限后暂停并保留进度；图片用量估算存在误差，实际以接口账单为准。</p>
+  </details>
   <details class="settings-group"><summary>模型能力与兼容参数</summary><label class="check"><input name="vision" type="checkbox">服务支持图片输入，分析关联图片</label><label class="check"><input name="json_mode" type="checkbox">服务支持 JSON mode</label>
   <label>额外模型参数（JSON，可选）<textarea name="extra_parameters" rows="3" placeholder='例如 {"chat_template_kwargs":{"enable_thinking":true}}'></textarea></label>
   <p class="muted">流程由程序安排检索，无需模型支持工具调用。图片、结构化输出和思考参数可按服务能力调整。</p></details>
