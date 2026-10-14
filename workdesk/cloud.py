@@ -197,7 +197,7 @@ class CloudPipeline(Pipeline):
                      selection=[known[i] for i in ids], supplement=supplement, config=cfg,
                      status='queued', phase='等待分析资料', conversations=[], warnings=warnings,
                      run_id=run['id'], attempt=uuid.uuid4().hex, analysis_done=0, analysis_total=0,
-                     error=None, ledger={}, usage={}, results=None, cloud_upload=True,cache_candidates=candidates)
+                     error=None, ledger={}, usage={}, results=None, cloud_upload=True,cache_candidates=candidates,budget_start={'calls':0,'tokens':0})
             assets=range_assets if window else [s['id'] for s in ctx['sources'] if s['id'] in latest_ids and s['id'] not in primary and Path(s['relative_path']).suffix.lower()!='.md' and not s['relative_path'].startswith('background/')]
             if incremental:
                 assets=[sid for sid in assets if not any(s['id']==sid and old_by_object[s['object_id']].get('sources',{}).get(s['relative_path'])==s['sha256'] for s in ctx['sources'])]

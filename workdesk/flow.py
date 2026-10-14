@@ -129,7 +129,7 @@ class Pipeline:
             j=dict(id=uuid.uuid4().hex,created_at=now(),mode=mode,start=start.astimezone(TZ).isoformat(),end=end.astimezone(TZ).isoformat(),
                 export_path=str(self.export_override or cfg['device_paths']['export_directory']),selection=[self.catalog[t] for t in selected],supplement=supplement,config=cfg,status='queued',phase='等待开始',
                 conversations=[],warnings=[],run_id=None,attempt=uuid.uuid4().hex,force_analysis=bool(payload.get('force_analysis',False)),
-                analysis_done=0,analysis_total=0,error=None,ledger={},usage={},results=None)
+                analysis_done=0,analysis_total=0,error=None,ledger={},usage={},results=None,budget_start={'calls':0,'tokens':0})
             self.save(j);self.settings.save({'last_selection':selected})
             if background:self._start(j['id'])
             return self.public_job(j['id'])
@@ -142,6 +142,9 @@ class Pipeline:
             j=self.job(jid)
             if j.get('materials_cleaned_at'):raise DeskError('本轮任务资料已清理，请重新上传并创建新的分析任务')
             if self.running or j['status'] not in ('failed','paused','cancelled'):raise DeskError('此任务当前不能继续')
+            if 'budget_start' not in j:
+                j['budget_start']={'calls':j.get('request_count',j['analysis_done']),'tokens':j['usage'].get('total_tokens',0)}
+                j['warnings'].append('旧任务接续：原有调用与用量保留在累计统计；追加部分按当前整轮上限控制，此额度不会随再次点击继续而重置。')
             cfg=config_snapshot(self.settings)
             resume_truncated=bool(j.get('error','') and j['error'].startswith('模型输出被截断'))
             # Capacity/timeout increases do not invalidate already validated results.
@@ -418,10 +421,11 @@ class Pipeline:
         self.save(j)
 
     def _budget(self,j,messages,c,images):
-        count=j.get('request_count',j['analysis_done'])
+        baseline=j.get('budget_start',{'calls':0,'tokens':0})
+        count=j.get('request_count',j['analysis_done'])-baseline['calls']
         if count>=j['config'].get('max_model_calls',60):
             raise AnalysisBudget('已到本轮模型调用次数上限；进度已保留。提高整轮上限后可继续，不会重复已完成调用。')
-        used=j['usage'].get('total_tokens',0);limit=j['config'].get('max_total_tokens',300000)
+        used=j['usage'].get('total_tokens',0)-baseline['tokens'];limit=j['config'].get('max_total_tokens',300000)
         # Reserve conservatively for the next request. Image tokenization is provider-dependent.
         chars=sum(len(m['content']) if isinstance(m['content'],str) else sum(len(p.get('text','')) for p in m['content']) for m in messages)
         remaining=limit-used-chars-2048*len(images or [])

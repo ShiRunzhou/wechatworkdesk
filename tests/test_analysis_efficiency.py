@@ -123,3 +123,12 @@ class EfficiencyTests(unittest.TestCase):
         j=self.flow.create({**self.payload,'mode':'agent'},False);self.flow.run(j['id']);ctx=self.flow.context(j['id'])
         Pipeline(self.store).submit(j['id'],{'matters':[],'backgrounds':[],'coverage':[dict(source_id=s['id'],state='read',note='测试已完整阅读') for s in ctx['sources']]})
         j=self.run_job();self.assertEqual(j['status'],'completed',j['error']);self.assertFalse(self.model.calls)
+
+    def test_legacy_resume_budget_excludes_old_spend_once_only(self):
+        self.flow.settings.save({'max_model_calls':1});j=self.run_job()
+        raw=self.flow.job(j['id']);raw.pop('budget_start');raw['request_count']=93;raw['usage']['total_tokens']=1700000;self.flow.save(raw)
+        self.flow.retry(j['id'],False);self.flow.run(j['id']);last=self.flow.job(j['id'])
+        self.assertEqual(last['status'],'completed',last['error']);self.assertEqual(last['request_count'],94)
+        self.assertEqual(last['budget_start'],{'calls':93,'tokens':1700000})
+        last['status']='paused';self.flow.save(last);self.flow.retry(j['id'],False)
+        self.assertEqual(self.flow.job(j['id'])['budget_start'],{'calls':93,'tokens':1700000})
