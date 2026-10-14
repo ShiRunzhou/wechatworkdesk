@@ -36,6 +36,7 @@ SYSTEM += '\n按已生效exclude规则不列出的新通知，写入filtered_ite
 SYSTEM += '\n已生效规则相互冲突时，不静默过滤；列出相关事项并在questions中注明冲突与需要核实之处。'
 
 SYSTEM += '\n简洁提取事实与行动，不为例行通知反复检索。仅在未读原资料会实质改变责任、期限或完成判断时请求补查；已提供材料中的答案不再请求。背景资料只帮助理解，不单独生成旧通知。'
+SYSTEM += '\n人工反馈的id只能用于rule_suggestions.feedback_ids，绝不能放入evidence.source_id。原消息来源ID是回查线索，不等于该文件已提供正文。证据只引用材料头部source_id或allowed_evidence_sources中的已读资料。没有已生效exclude规则支持的一般未列出说明可写scope_exclusions，不能伪造空rule_id的filtered_items。'
 
 class AnalysisBudget(DeskError):
     pass
@@ -340,6 +341,8 @@ class Pipeline:
             material.append(f"source_id={p['source_id']} object_id={p['object_id']} {p['relative_path']} 第{p['start_line']}至{p['end_line']}行\n{p['text']}")
         user={'goal':ctx['run']['goal'],'context':self._model_context(ctx,oid),'materials':material,
               'draft_to_verify':draft or [] if verify else [],'material_gaps':ctx['pipeline']['update_gaps']}
+        user['allowed_evidence_sources']=[sid for sid in j['ledger'] if any(s['id']==sid and s['object_id']==oid for s in ctx['sources'])]
+        user['allowed_evidence_sources']=list(dict.fromkeys(user['allowed_evidence_sources']+[p['source_id'] for p in parts]+[sid for sid,_ in images or []]))
         if draft and not verify:
             fields=('dedup_key','title','deadline','owner','action','detail','questions')
             user['context']['current_candidates']=[{k:str(m.get(k,''))[:500] for k in fields} for m in draft]
@@ -452,8 +455,16 @@ class Pipeline:
         extra=j.setdefault('memory_extras',{'rule_suggestions':[],'filtered_items':[]})
         for key in extra:
             for item in result.get(key,[]):
+                if key=='filtered_items' and not item.get('rule_id'):
+                    note={**item,'object_id':oid};notes=j.setdefault('scope_exclusions',[])
+                    if note not in notes:notes.append(note)
+                    continue  # General selection decisions are not active-rule filtering.
                 item={**item,'object_id':oid}
                 if item not in extra[key]:extra[key].append(item)
+        for item in result.get('scope_exclusions',[]):
+            if isinstance(item,dict):
+                note={**item,'object_id':oid};notes=j.setdefault('scope_exclusions',[])
+                if note not in notes:notes.append(note)
     def _validate_segment(self,result,oid,ctx):
         for field in ('matters','backgrounds','lookup_requests','rule_suggestions','filtered_items'):
             if not isinstance(result.get(field,[]),list):raise DeskError('模型结果列表格式错误：'+field)
@@ -481,6 +492,10 @@ class Pipeline:
         except DeskError as e:
             name=next(o['name'] for o in ctx['objects'] if o['id']==oid)
             raise DeskError(f'分析“{name}”时，{e}；本轮未发布。可继续任务重新生成本段结果。') from e
+        for field in ('matters','backgrounds','filtered_items'):
+            for item in result.get(field,[]):
+                for e in item.get('evidence',[]):
+                    if isinstance(e,dict) and e.get('source_id') not in sources:raise DeskError('模型引用了未知资料编号；人工反馈编号不能作为资料证据，请继续重新核对此段。')
         for key in ('rule_suggestions','filtered_items'):
             if len(result.get(key,[]))>20:raise DeskError('单段规则建议或过滤结果最多20项')
             for item in result.get(key,[]):
@@ -491,6 +506,12 @@ class Pipeline:
             ctx['objects']=live['objects'];atomic_json(self.folder(j['id'])/'context.json',ctx)
             j.update(attempt=uuid.uuid4().hex,ledger={},analysis_done=0,resume_truncated=False,recovery_calls=[],memory_extras={'rule_suggestions':[],'filtered_items':[]});self.save(j)
         pool=Pool(ctx,j['ledger']);provider=self.provider_factory(j['config'],self.settings.key())
+        extras=j.get('memory_extras',{})
+        for item in extras.get('filtered_items',[]):
+            if not item.get('rule_id'):
+                notes=j.setdefault('scope_exclusions',[])
+                if item not in notes:notes.append(item)
+        if 'filtered_items' in extras:extras['filtered_items']=[i for i in extras['filtered_items'] if i.get('rule_id')]
         # Rebuild material-gap warnings on resume; installed readers may resolve earlier gaps.
         j['warnings']=list(dict.fromkeys(w for w in j['warnings'] if not w.startswith(('附件文字未读取：','附件类型未分析：','附件暂无法读取：','图片未分析：','图片未读取：'))))
         if all(pool.sources[s]['relative_path'].startswith(('analysis/','background/')) for s in ctx['pipeline']['primary_sources']):

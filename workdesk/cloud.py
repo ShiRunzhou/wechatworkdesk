@@ -246,6 +246,17 @@ class CloudPipeline(Pipeline):
 
     def _mark_processed(self, j):
         from .analysis_cache import published,signature
+        if not j.get('cache_candidates') and j.get('cloud_upload'):
+            # Upgrade a legacy completed task using only its frozen authorized snapshots.
+            from datetime import datetime
+            from .analysis_range import freeze_window
+            ctx=self.context(j['id']);authorized={s['id'] for s in ctx['sources']};candidates={}
+            for obj in ctx['objects']:
+                oid=obj['id']
+                try:_,_,summary,_=freeze_window(self.store,oid,datetime.fromisoformat(j['start']),datetime.fromisoformat(j['end']),source_ids=authorized,register=False)
+                except DeskError:continue
+                candidates[oid]={'signature':signature(self.store,oid,j['config'],j['supplement']),'messages':summary['message_marks'],'sources':{}}
+            j['cache_candidates']=candidates
         if j.get('cache_candidates'):
             with self.guard:
                 ctx=self.context(j['id']);states={}

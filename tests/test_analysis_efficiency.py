@@ -71,7 +71,7 @@ class EfficiencyTests(unittest.TestCase):
         self.flow.settings.save({'max_total_tokens':1000});j=self.run_job()
         self.assertEqual(j['status'],'paused');self.assertEqual(len(self.model.calls),0)
         self.flow.settings.save({'max_total_tokens':300000});self.model.unsafe=True;j=self.run_job()
-        self.assertEqual(j['status'],'failed');self.assertEqual(j['usage']['total_tokens'],20);self.assertEqual(j['request_count'],2)
+        self.assertEqual(j['status'],'failed');self.assertEqual(j['usage']['total_tokens'],10);self.assertEqual(j['request_count'],1)
 
     def test_efficient_extraction_disabled_thinking_final_verification_preserved(self):
         j=self.run_job();self.assertEqual(j['status'],'completed',j['error'])
@@ -161,3 +161,10 @@ class EfficiencyTests(unittest.TestCase):
         j=self.run_job();self.assertEqual(j['status'],'completed',j['error']);self.assertEqual(j['asset_summary'],{'selected':2,'unique':1,'duplicate':1})
         self.assertEqual(len(self.model.calls),3)
         before=len(self.model.calls);j=self.run_job();self.assertEqual(j['status'],'completed',j['error']);self.assertEqual(len(self.model.calls),before)
+
+    def test_legacy_completed_task_bootstraps_only_its_frozen_messages(self):
+        j=self.flow.create(self.payload,False);raw=self.flow.job(j['id']);raw.pop('cache_candidates');self.flow.save(raw)
+        self.md.write_text(self.md.read_text('utf8')+'\n## 2026-10-02T13:00:00+08:00 乙\n消息标识: server:2\n实习材料又有更新。\n','utf8');self.flow.upload(self.md,'chat.md',self.obj['id'])
+        self.flow.run(j['id']);done=self.flow.job(j['id']);self.assertEqual(done['status'],'completed',done['error'])
+        next_job=self.flow.create(self.payload,False);summary=self.flow.context(next_job['id'])['pipeline']['summary'][0]
+        self.assertEqual((summary['analysis_messages'],summary['reused_messages']),(1,1))

@@ -32,9 +32,10 @@ def bounds(payload):
     return start,end
 
 
-def freeze_window(store,oid,start,end,processed=None,allow_empty=False):
+def freeze_window(store,oid,start,end,processed=None,allow_empty=False,source_ids=None,register=True):
     with store.connect() as con:
         rows=[dict(r) for r in con.execute("SELECT * FROM sources WHERE object_id=? AND cleaned_at='' ORDER BY created_at DESC,rowid DESC",(oid,))]
+    if source_ids is not None:rows=[r for r in rows if r['id'] in source_ids]
     blocks=[];seen=set();assets=set();unknown=[];marks={};skipped=0;total=0;skipped_sources=0
     processed=processed or {}
     versions={}
@@ -75,7 +76,7 @@ def freeze_window(store,oid,start,end,processed=None,allow_empty=False):
         if rel in assets and rel not in picked and not rel.lower().endswith('.md'):
             asset_ids.append(row['id']);picked.add(rel)
     primary=[]
-    if blocks:
+    if blocks and register:
         with tempfile.TemporaryDirectory(prefix='wcwd-analysis-range-') as tmp:
             file=Path(tmp)/'analysis/selected-messages.md';file.parent.mkdir()
             file.write_text('# 本轮分析重点资料\n\n消息范围：'+start.isoformat()+' 至 '+end.isoformat()+'\n原始资料仍可按来源ID回查。\n\n'+'\n\n'.join(b for _,b in sorted(blocks,key=lambda x:x[0])),'utf8')
@@ -84,5 +85,5 @@ def freeze_window(store,oid,start,end,processed=None,allow_empty=False):
     warnings=[]
     if unknown:
         primary.extend(unknown);warnings.append('部分历史Markdown无法识别消息日期，已保留供核查；不能据此断言覆盖所选时段。')
-    if not primary and not (allow_empty and (skipped or skipped_sources)):raise DeskError('所选对象在分析时段内没有可用聊天记录，请先更新该时段或调整范围')
+    if not primary and not (allow_empty and (skipped or skipped_sources)) and not (blocks and not register):raise DeskError('所选对象在分析时段内没有可用聊天记录，请先更新该时段或调整范围')
     return primary,asset_ids,{'object_id':oid,'analysis_messages':len(blocks),'total_messages':total,'reused_messages':skipped,'message_marks':marks},warnings
