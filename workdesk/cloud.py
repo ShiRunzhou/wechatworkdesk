@@ -110,16 +110,21 @@ def unpack_upload(archive, destination):
 
 
 class CloudPipeline(Pipeline):
+    def analysis_scope(self):
+        path=self.store.root/'flow/analysis-scope.json'
+        return json.loads(path.read_text('utf8')) if path.exists() else {}
     def sessions(self, refresh=False):
         with self.store.connect() as con:
             objects = [dict(r) for r in con.execute('SELECT * FROM objects ORDER BY name')]
-        sessions = [dict(external_id=o['id'], name=o['name'], kind=o['kind']) for o in objects]
+        with self.store.connect() as con:
+            uploaded={r[0]:r[1] for r in con.execute("SELECT object_id,max(created_at) FROM imports i WHERE EXISTS(SELECT 1 FROM import_sources x JOIN sources s ON s.id=x.source_id WHERE x.import_id=i.id AND s.relative_path NOT LIKE 'analysis/%') GROUP BY object_id")}
+        sessions = [dict(external_id=o['id'], name=o['name'], kind=o['kind'],uploaded_at=uploaded.get(o['id'])) for o in objects]
         return dict(sessions=sessions, error=None, default_selection=self.settings.public()['last_selection'])
 
-    def upload(self, archive, filename, object_id):
-        with self.guard:return self._upload(archive,filename,object_id)
+    def upload(self, archive, filename, object_id, start='',end=''):
+        with self.guard:return self._upload(archive,filename,object_id,start,end)
 
-    def _upload(self, archive, filename, object_id):
+    def _upload(self, archive, filename, object_id,start='',end=''):
         with self.store.connect() as con:
             self.store.one(con, 'objects', object_id)
         # Staging is outside data because Store rejects self-imports.
@@ -131,7 +136,7 @@ class CloudPipeline(Pipeline):
                 (folder/'messages.md').write_bytes(Path(archive).read_bytes())
             else:
                 raise DeskError('请上传 .md 聊天记录或包含附件的 .zip 压缩包')
-            result = self.store.register_import(object_id, folder)
+            result = self.store.register_import(object_id, folder,start,end)
         return result
 
     def create(self, payload, background=True):
@@ -152,28 +157,35 @@ class CloudPipeline(Pipeline):
             cfg = config_snapshot(self.settings)
             if mode == 'api' and not (cfg['base_url'] and cfg['model']):
                 raise DeskError('请先配置模型接口')
-            goal = cfg['default_goal'] + '\n本轮分析各对象最近一次上传的完整资料；上传时间不是消息时间。' + supplement
+            from .analysis_range import bounds,freeze_window
+            window=bounds(payload);summary=[];warnings=[];range_primary=[];range_assets=[]
+            if window:
+                for oid in ids:
+                    primary,assets,item,notes=freeze_window(self.store,oid,*window)
+                    range_primary.extend(primary);range_assets.extend(assets);summary.append(item);warnings.extend(notes)
+            goal = cfg['default_goal'] + ('\n只从本轮消息时段提出新增事项：'+window[0].isoformat()+' 至 '+window[1].isoformat()+'。历史资料和已确认记忆用于理解、回查与沿用原事项；不要把范围外的旧通知重新当作新增事项。' if window else '\n本轮分析各对象最近一次上传的完整资料；上传时间不是消息时间。') + supplement
             latest_ids = []
             # Keep latest uploads as primary, while frozen history stays available for retrieval.
             with self.store.connect() as con:
                 for oid in ids:
-                    latest_ids.extend(r[0] for r in con.execute('SELECT s.source_id FROM import_sources s JOIN imports i ON i.id=s.import_id WHERE i.id=(SELECT id FROM imports WHERE object_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1)',(oid,)))
+                    latest_ids.extend(r[0] for r in con.execute("SELECT s.source_id FROM import_sources s JOIN imports i ON i.id=s.import_id WHERE i.id=(SELECT i2.id FROM imports i2 WHERE i2.object_id=? AND EXISTS(SELECT 1 FROM import_sources x JOIN sources y ON y.id=x.source_id WHERE x.import_id=i2.id AND y.relative_path NOT LIKE 'analysis/%') ORDER BY i2.created_at DESC,i2.rowid DESC LIMIT 1)",(oid,)))
             run = self.store.create_run(ids, goal)
             with self.store.connect() as con:
                 for oid in ids:
                     con.execute('INSERT OR IGNORE INTO run_imports SELECT ?,id FROM imports WHERE object_id=?',(run['id'],oid))
             ctx = self.store.context(run['id'])
             primary = [s['id'] for s in ctx['sources'] if s['id'] in latest_ids and Path(s['relative_path']).suffix.lower() == '.md']
+            if window:primary=range_primary
             if not primary:
                 raise DeskError('所选对象最新资料中没有 Markdown 聊天记录')
             stamp = now()
-            j = dict(id=uuid.uuid4().hex, created_at=stamp, mode=mode, start=stamp, end=stamp,
+            j = dict(id=uuid.uuid4().hex, created_at=stamp, mode=mode, start=window[0].isoformat() if window else stamp, end=window[1].isoformat() if window else stamp,
                      selection=[known[i] for i in ids], supplement=supplement, config=cfg,
-                     status='queued', phase='等待分析上传资料', conversations=[], warnings=[],
+                     status='queued', phase='等待分析资料', conversations=[], warnings=warnings,
                      run_id=run['id'], attempt=uuid.uuid4().hex, analysis_done=0, analysis_total=0,
                      error=None, ledger={}, usage={}, results=None, cloud_upload=True)
-            ctx['pipeline'] = dict(job_id=j['id'], selected_range=[], summary=[], primary_sources=primary,
-                                   selected_assets=[s['id'] for s in ctx['sources'] if s['id'] in latest_ids and s['id'] not in primary],
+            ctx['pipeline'] = dict(job_id=j['id'], selected_range=[j['start'],j['end']] if window else [], summary=summary, primary_sources=primary,
+                                   selected_assets=range_assets if window else [s['id'] for s in ctx['sources'] if s['id'] in latest_ids and s['id'] not in primary],
                                    background_sources=[], update_gaps=[])
             folder = self.folder(j['id'])
             atomic_json(folder/'context.json', ctx)
@@ -185,6 +197,7 @@ class CloudPipeline(Pipeline):
                 '也可在已登录的网站通过本轮 context、read、search、submit 接口完成同一流程。\n', 'utf8')
             self.save(j)
             self.settings.save({'last_selection': ids})
+            atomic_json(self.store.root/'flow/analysis-scope.json',{k:payload[k] for k in ('sessions','range','start','end') if k in payload})
             if background:
                 self._start(j['id'])
             return self.public_job(j['id'])

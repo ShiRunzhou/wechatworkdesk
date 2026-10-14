@@ -4,6 +4,7 @@ import subprocess
 import sys
 import time
 import webbrowser
+import os
 from pathlib import Path
 from urllib import request
 
@@ -19,6 +20,26 @@ def health():
 
 def main():
     DATA.mkdir(parents=True,exist_ok=True)
+    # Start WeFlow in the background if its local API is not listening.
+    sys.path.insert(0,str(ROOT))
+    from workdesk.device_paths import load_paths
+    from types import SimpleNamespace
+    config=json.loads((DATA/'settings.json').read_text('utf8')) if (DATA/'settings.json').exists() else {}
+    paths=load_paths(SimpleNamespace(path=ROOT/'data/flow/settings.json'))
+    for k,v in paths.items():
+        if not config.get(k):config[k]=v
+    try:
+        c=json.loads(Path(config['weflow_config']).read_text('utf8'))
+        api_url='http://127.0.0.1:'+str(int(c.get('httpApiPort',5031)))+'/api/v1/health'
+        try:
+            request.build_opener(request.ProxyHandler({})).open(api_url,timeout=1).close()
+        except request.HTTPError:pass # A reachable API may require a token.
+        except OSError:
+            exe=config.get('weflow_executable','')
+            if exe and Path(exe).is_file() and os.name=='nt':
+                env={**os.environ,'WCWD_WEFLOW_EXE':exe}
+                subprocess.run(['powershell','-NoProfile','-NonInteractive','-Command','Start-Process -FilePath $env:WCWD_WEFLOW_EXE -WindowStyle Hidden'],env=env,creationflags=subprocess.CREATE_NO_WINDOW,check=True)
+    except (OSError,ValueError):pass # The integrated settings page explains missing paths.
     if not health():
         with (DATA/'service.log').open('ab') as log:
             p=subprocess.Popen([sys.executable,'-m','workdesk.assistant','--data',str(DATA)],cwd=ROOT,stdout=log,stderr=log,
@@ -29,7 +50,7 @@ def main():
             time.sleep(.2)
         else:
             p.terminate();raise SystemExit('更新助手启动超时。')
-    if '--no-browser' not in sys.argv:webbrowser.open(URL)
-    print(URL)
+    if '--no-browser' not in sys.argv:webbrowser.open(URL+'/update')
+    print(URL+'/update')
 
 if __name__=='__main__':main()

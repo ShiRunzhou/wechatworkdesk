@@ -66,10 +66,13 @@ def valid_talker(t):
 
 def time_range(payload, clock=None):
     end = clock or datetime.now(TZ)
+    now_limit=end
     if payload.get('range', 'recent') == 'custom':
         try:
             start = datetime.strptime(payload['start'], '%Y/%m/%d').replace(tzinfo=TZ)
             end = datetime.strptime(payload['end'], '%Y/%m/%d').replace(tzinfo=TZ) + timedelta(days=1, seconds=-1)
+            if end.date()>now_limit.date():raise ValueError()
+            end=min(end,now_limit)
         except (ValueError, KeyError, TypeError):
             raise ValueError('日期须为 yyyy/mm/dd，请从日历选择') from None
     else:
@@ -153,6 +156,10 @@ class Assistant:
             'selection':list(SCOPE),'presets':{},'mapping':{},'stt_url':'','stt_model':'',
             'voice_mode':'local','voice_model_directory':'','weflow_executable':''}
         if self.path.exists():self.config.update(json.loads(self.path.read_text('utf8')))
+        if not self.config['weflow_executable']:
+            from .device_paths import load_paths
+            from types import SimpleNamespace
+            self.config['weflow_executable']=load_paths(SimpleNamespace(path=self.root.parent/'flow/settings.json'))['weflow_executable']
         cache=self.root/'contacts.json'
         if cache.exists():
             data=json.loads(cache.read_text('utf8'));self.catalog=data.get('catalog',{});self.objects=data.get('objects',[])
@@ -313,7 +320,7 @@ class Assistant:
                             obj=found[0] if found else remote.call('/api/objects',{'name':name,'kind':s['kind']})
                             oid=obj['id'];self.config['mapping'][t]=oid;atomic_json(self.path,self.config)
                         j['phase']='正在上传：'+s['name'];self.save_job(j)
-                        row['upload_result']=remote.call('/api/uploads?'+parse.urlencode({'object_id':oid,'filename':'records.zip'}),file=row['archive'])
+                        row['upload_result']=remote.call('/api/uploads?'+parse.urlencode({'object_id':oid,'filename':'records.zip','start':datetime.fromtimestamp(j['start'],TZ).isoformat(),'end':datetime.fromtimestamp(j['end'],TZ).isoformat()}),file=row['archive'])
                         row['object_id']=oid;row['uploaded']=True
                 except (ValueError,RuntimeError,OSError) as exc:
                     # Never persist exception text from third-party libraries or credentials.
@@ -354,25 +361,31 @@ def make_server(assistant,port=8771):
         def allowed(self):return self.headers.get('Host') in (f'127.0.0.1:{self.server.server_port}',f'localhost:{self.server.server_port}')
         def do_GET(self):
             if not self.allowed():return self.send(403,{'error':'仅允许本机访问'})
-            if self.path=='/api/state':return self.send(200,assistant.public())
+            if self.path=='/api/device/state':return self.send(200,{'connected':True,**assistant.public()})
             if self.path=='/api/health':return self.send(200,{'assistant':True,'root':str(assistant.root.resolve())})
-            files={'/':('assistant.html','text/html; charset=utf-8'),'/assistant.js':('assistant.js','text/javascript; charset=utf-8'),'/assistant.css':('assistant.css','text/css; charset=utf-8')}
+            files={'/device-settings':('assistant.html','text/html; charset=utf-8'),'/assistant.js':('assistant.js','text/javascript; charset=utf-8'),'/assistant.css':('assistant.css','text/css; charset=utf-8')}
             if self.path in files:
                 name,mime=files[self.path];return self.send(200,(WEB/name).read_bytes(),mime)
-            self.send(404,{'error':'未找到页面'})
+            if self.path.startswith('/api/device/'):return self.send(404,{'error':'未找到本机操作'})
+            from .gateway import proxy
+            return proxy(self,assistant)
         def do_POST(self):
             origins=[f'http://127.0.0.1:{self.server.server_port}',f'http://localhost:{self.server.server_port}']
             if not self.allowed() or self.headers.get('Origin') not in origins or self.headers.get('Sec-Fetch-Site')=='cross-site':return self.send(403,{'error':'请从更新助手页面操作'})
             if self.headers.get('Content-Type')!='application/json':return self.send(415,{'error':'请求格式错误'})
             try:
                 n=int(self.headers.get('Content-Length','0'))
-                if not 1<=n<=128*1024:raise ValueError('请求大小无效')
+                limit=128*1024 if self.path.startswith('/api/device/') else 8*1024**2
+                if not 1<=n<=limit:raise ValueError('请求大小无效')
                 self.connection.settimeout(20);p=json.loads(self.rfile.read(n))
                 if not isinstance(p,dict):raise ValueError('请求格式错误')
-                if self.path=='/api/quit':
+                if not self.path.startswith('/api/device/'):
+                    from .gateway import proxy
+                    return proxy(self,assistant,json.dumps(p,ensure_ascii=False).encode())
+                if self.path=='/api/device/quit':
                     if assistant.running:raise ValueError('更新正在进行，请完成后关闭助手')
                     self.send(200,{'closed':True});threading.Thread(target=self.server.shutdown,daemon=True).start();return
-                methods={'/api/settings':assistant.save,'/api/contacts':lambda _:assistant.refresh(),'/api/connect':lambda _:assistant.connect(),'/api/preset':assistant.preset,'/api/start':assistant.start}
+                methods={'/api/device/settings':assistant.save,'/api/device/contacts':lambda _:assistant.refresh(),'/api/device/connect':lambda _:assistant.connect(),'/api/device/preset':assistant.preset,'/api/device/start':assistant.start}
                 if self.path not in methods:return self.send(404,{'error':'未找到操作'})
                 self.send(200,methods[self.path](p))
             except (ValueError,RuntimeError) as exc:

@@ -111,11 +111,11 @@ class AssistantTests(unittest.TestCase):
         server=make_server(self.a,0);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
         self.addCleanup(server.server_close);self.addCleanup(server.shutdown)
         url=f'http://127.0.0.1:{server.server_port}'
-        with request.urlopen(url+'/api/state') as r:self.assertEqual(r.status,200)
-        req=request.Request(url+'/api/contacts',data=b'{}',headers={'Content-Type':'application/json','Origin':'https://evil.example'})
+        with request.urlopen(url+'/api/device/state') as r:self.assertEqual(r.status,200)
+        req=request.Request(url+'/api/device/contacts',data=b'{}',headers={'Content-Type':'application/json','Origin':'https://evil.example'})
         with self.assertRaises(error.HTTPError) as e:request.urlopen(req)
         self.assertEqual(e.exception.code,403)
-        req=request.Request(url+'/api/contacts',data=b'{}',headers={'Content-Type':'application/json','Origin':url})
+        req=request.Request(url+'/api/device/contacts',data=b'{}',headers={'Content-Type':'application/json','Origin':url})
         with request.urlopen(req) as r:self.assertEqual(r.status,200)
     def test_polling_uses_snapshot_without_opening_job_files(self):
         from unittest.mock import patch

@@ -67,7 +67,8 @@ def make_server(store, port=8770, pipeline=None, website=None):
                                            "pipeline": True,
                                            "instance": hashlib.sha256(str(store.root).casefold().encode()).hexdigest()})
                 if path == '/api/pipeline/config':
-                    return self.send(200,{**pipeline.settings.public(), 'website_mode': bool(website)})
+                    return self.send(200,{**pipeline.settings.public(), 'website_mode': bool(website), 'analysis_scope':pipeline.analysis_scope() if hasattr(pipeline,'analysis_scope') else {}})
+                if path=='/api/device/state':return self.send(200,{'connected':False})
                 if path == '/api/pipeline/sessions':
                     return self.send(200,pipeline.sessions('refresh=1' in urlsplit(self.path).query))
                 if path == '/api/pipeline/jobs':
@@ -225,7 +226,7 @@ def make_server(store, port=8770, pipeline=None, website=None):
                             block = self.rfile.read(min(remaining,1024**2))
                             if not block:raise DeskError('上传中断，请重新上传')
                             output.write(block);remaining -= len(block)
-                    result = pipeline.upload(archive,filename,oid)
+                    result = pipeline.upload(archive,filename,oid,query.get('start',[''])[0],query.get('end',[''])[0])
                 return self.send(200,result)
             except (DeskError, ValueError, zipfile.BadZipFile, RuntimeError, EOFError):
                 return self.send(400, {'error': '上传失败，请核对对象和文件；压缩包须包含 .md，不能含链接、加密文件或超出大小限制'})

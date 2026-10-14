@@ -2,3 +2,4 @@
 :root .session{flex-direction:row}
 
 .date-picker{position:relative;display:flex;justify-content:space-between;align-items:center;min-height:42px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:white}.date-picker input[type=date]{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}.date-picker:focus-within{outline:3px solid #99baa8;outline-offset:2px}
+.session>span{flex:1;min-width:0}.session>select{max-width:170px;font-size:12px}.analysis-sessions{max-height:280px;overflow:auto}.workspace+.panel{margin-top:22px}
