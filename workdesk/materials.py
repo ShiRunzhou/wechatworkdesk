@@ -73,7 +73,9 @@ def extract(path):
     if ext=='.pdf':
         try:
             from pypdf import PdfReader
-            doc=PdfReader(path);pages=['[第%d页]\n%s'%(i+1,p.extract_text() or '[本页未提取到文字]') for i,p in enumerate(doc.pages)]
+            doc=PdfReader(path);texts=[p.extract_text() or '' for p in doc.pages]
+            if not any(t.strip() for t in texts):raise DeskError('PDF为扫描件，未取得可用文字；需按页面图像核查')
+            pages=['[第%d页]\n%s'%(i+1,t or '[本页未提取到文字]') for i,t in enumerate(texts)]
             return '\n\n'.join(pages),'PDF文字层；扫描图片、版式和图表未核验'
         except ImportError:
             python=Path.home()/'.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe'

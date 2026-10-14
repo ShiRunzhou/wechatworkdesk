@@ -491,6 +491,10 @@ class Pipeline:
             ctx['objects']=live['objects'];atomic_json(self.folder(j['id'])/'context.json',ctx)
             j.update(attempt=uuid.uuid4().hex,ledger={},analysis_done=0,resume_truncated=False,recovery_calls=[],memory_extras={'rule_suggestions':[],'filtered_items':[]});self.save(j)
         pool=Pool(ctx,j['ledger']);provider=self.provider_factory(j['config'],self.settings.key())
+        # Rebuild material-gap warnings on resume; installed readers may resolve earlier gaps.
+        j['warnings']=list(dict.fromkeys(w for w in j['warnings'] if not w.startswith(('附件文字未读取：','附件类型未分析：','附件暂无法读取：','图片未分析：','图片未读取：'))))
+        if all(pool.sources[s]['relative_path'].startswith(('analysis/','background/')) for s in ctx['pipeline']['primary_sources']):
+            j['warnings']=[w for w in j['warnings'] if not w.startswith('部分历史Markdown无法识别消息日期')]
         drafts={};bgs={};j['analysis_total']=0;self.save(j)
         for sid in ctx['pipeline']['primary_sources']:
             if pool.sources[sid]['relative_path'].startswith('background/'):
