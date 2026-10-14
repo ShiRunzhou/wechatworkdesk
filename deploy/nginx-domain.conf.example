@@ -13,6 +13,30 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     client_max_body_size 200m;
     client_body_timeout 120s;
+    # Static UI can be updated without interrupting an active analysis worker.
+    # Provision /opt/wechatworkdesk-web/current before enabling these locations.
+    location = /__wcwd_static_auth {
+        internal;
+        proxy_pass http://127.0.0.1:8770/api/health;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Host 127.0.0.1:8770;
+        proxy_set_header Authorization $http_authorization;
+    }
+    location = /update {
+        auth_request /__wcwd_static_auth;
+        alias /opt/wechatworkdesk-web/current/update.html;
+        default_type text/html;
+        add_header Cache-Control no-store always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'" always;
+    }
+    location ~ ^/(update\.js|update\.css)$ {
+        auth_request /__wcwd_static_auth;
+        root /opt/wechatworkdesk-web/current;
+        add_header Cache-Control no-store always;
+        add_header X-Content-Type-Options nosniff always;
+    }
     location / {
         proxy_pass http://127.0.0.1:8770;
         proxy_set_header Host 127.0.0.1:8770;

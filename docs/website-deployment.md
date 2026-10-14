@@ -27,3 +27,7 @@ Python 3.12 容器运行为 UID10001，绑定服务器本机127.0.0.1:8770；600
 备份目录：`/var/backups/wechatworkdesk`；服务和定时器：`wechatworkdesk-backup.service/timer`。这是同一台服务器上的备份；尚未配置异地备份。
 
 恢复前停止工作台、另存当前数据，将备份解压至相同数据路径、恢复私有密钥和权限，再启动并检查源文件哈希及事项状态。备份源路径与数据库对应，不能任意改盘符；换数据根目录需要重新映射 sources.snapshot_path。旧运行任务不会恢复，应创建新一轮分析。
+# 不打断分析的页面更新
+
+域名Nginx配置可将更新页面及其JS/CSS指向 `/opt/wechatworkdesk-web/current`，并通过内部 `/api/health` 子请求验证相同网站登录。更新静态文件后检查Nginx配置并平滑重载，不重启分析容器。每次后续发布应同步复制同版本的 `update.html`、`update.js`、`update.css` 并切换current链接，防止静态界面与容器代码版本不一致。页面与静态资源仍须登录。
+

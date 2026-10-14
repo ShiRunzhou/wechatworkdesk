@@ -7,6 +7,7 @@
   <div class="heading"><div><h1>更新分析模块</h1><p>更新上传、分析资料，再进入事件处理模块；各设备使用网站保存的同一份数据。</p></div></div>
   <p id="notice" role="status" hidden></p>
   <p id="device-status" class="muted">正在检查本机连接…</p>
+  <section class="workflow-region" aria-labelledby="update-region-title"><h2 id="update-region-title" class="region-title">更新区域</h2>
   <div class="workspace">
     <section class="panel conversations"><div class="section-head"><h2>更新对象</h2><button id="refresh-sessions">刷新联系人和群</button></div>
       <div class="search"><input id="search" type="search" placeholder="搜索联系人或群" aria-label="搜索联系人或群"><select id="kind"><option value="">全部</option><option value="person">联系人</option><option value="group">群</option><option value="selected">已勾选</option></select></div>
@@ -21,6 +22,9 @@
       <div class="actions"><button class="primary" id="update-only">开始更新上传</button></div><p id="update-hint" class="muted"></p>
     </section>
   </div>
+  <section class="panel status-panel"><div class="section-head"><h2>更新进度</h2><button id="refresh-device">刷新</button></div><div id="device-jobs"></div></section>
+  </section>
+  <section class="workflow-region" aria-labelledby="analysis-region-title"><h2 id="analysis-region-title" class="region-title">分析区域</h2>
   <section class="panel status-panel"><div class="section-head"><h2>资料分析</h2><a href="/">进入事件处理模块 →</a></div>
     <label class="check"><input id="follow-update" type="checkbox" checked>沿用最近一次成功更新的对象和时间</label><p id="analysis-summary" class="muted"></p>
     <details id="analysis-options"><summary>独立调整分析对象和时间</summary>
@@ -32,8 +36,8 @@
     <fieldset><legend>分析方式</legend><label class="radio"><input type="radio" name="mode" value="api">网站模型 API</label><label class="radio"><input type="radio" name="mode" value="agent" checked>Agent 分析</label></fieldset>
     <label>模型接口<select id="active-profile"></select></label><p id="model-hint" class="muted"></p><div class="actions"><button class="primary" id="start-job">开始分析</button></div>
   </section>
-  <section class="panel status-panel"><div class="section-head"><h2>更新进度</h2><button id="refresh-device">刷新</button></div><div id="device-jobs"></div></section>
   <section class="panel status-panel"><div class="section-head"><h2>分析进度与结果</h2><button id="refresh-jobs">刷新</button></div><div id="jobs"></div></section>
+  </section>
   <footer>原始导出资料保留 · 不发送微信消息 · 资料缺口会明确显示</footer>
 </main>
 <dialog id="settings"><form id="settings-form"><div class="section-head"><h2>分析设置</h2><button type="button" id="settings-close" aria-label="关闭">×</button></div>

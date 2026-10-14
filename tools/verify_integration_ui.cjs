@@ -6,6 +6,8 @@ const {chromium}=require(process.env.WCWD_PLAYWRIGHT||'playwright');
  const context=await browser.newContext({httpCredentials:{username:'fixture',password:'fixture-password-only'}});
  const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto('http://127.0.0.1:8880/update');await page.getByText('本机已连接',{exact:false}).waitFor();
+ if(!await page.locator('#device-jobs').evaluate(n=>n.closest('.workflow-region')?.getAttribute('aria-labelledby')==='update-region-title'))throw Error('Update progress is outside update region');
+ if(!await page.locator('#jobs').evaluate(n=>n.closest('.workflow-region')?.getAttribute('aria-labelledby')==='analysis-region-title'))throw Error('Analysis progress is outside analysis region');
  await page.locator('#update-only').click();await page.getByText('更新完成 · 已完成',{exact:false}).waitFor({timeout:20000});
  await page.locator('#analysis-summary').getByText('沿用更新范围',{exact:false}).waitFor();
  if(!await page.locator('#follow-update').isChecked())throw Error('Update range was not selected');
