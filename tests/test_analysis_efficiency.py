@@ -25,6 +25,16 @@ class EfficiencyTests(unittest.TestCase):
     def run_job(self,**extra):
         j=self.flow.create({**self.payload,**extra},False);self.flow.run(j['id']);return self.flow.job(j['id'])
 
+    def test_reconcile_fetches_matching_message_instead_of_wrong_background(self):
+        from workdesk.materials import Pool
+        j=self.run_job();ctx=copy.deepcopy(self.flow.context(j['id']));sid=ctx['pipeline']['primary_sources'][0]
+        source=copy.deepcopy(next(s for s in ctx['sources'] if s['id']==sid));source.update(id='f'*32,relative_path='background/profile.md');ctx['sources'].append(source)
+        pool=Pool(ctx,{source['id']:{'ranges':[[1,1]],'total_lines':1,'method':'文本'}})
+        items=[{'evidence':[{'source_id':source['id'],'locator':'消息时间2026-10-02T12:00'}]}]
+        parts=self.flow._reconcile_parts(pool,ctx,self.obj['id'],items,10000)
+        self.assertEqual(parts[0]['source_id'],sid);self.assertIn('10月20日前提交',parts[0]['text'])
+        self.assertFalse(self.flow._reconcile_parts(pool,ctx,self.obj['id'],items,0))
+
     def test_invalid_cached_reconcile_is_rechecked_without_replaying_other_calls(self):
         from workdesk.materials import Pool
         j=self.run_job();ctx=self.flow.context(j['id']);pool=Pool(ctx,copy.deepcopy(j['ledger']))

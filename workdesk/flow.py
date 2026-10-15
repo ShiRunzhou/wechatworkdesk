@@ -399,6 +399,16 @@ class Pipeline:
                 self._memory_extras(j,oid,obj['result']);return obj['result']
         self._phase(j,'正在分析 '+next(o['name'] for o in ctx['objects'] if o['id']==oid)+f' · 段 {j["analysis_done"]+1}')
         messages=self._messages(j,ctx,oid,parts,draft,images,verify=not j['config'].get('efficient_mode',True) or name.endswith('-reconcile') or '-lookup' in name)
+        if name.endswith('-reconcile') and draft:
+            errors=[]
+            for item in draft:
+                try:self._validate_evidence(pool,{'matters':[item],'backgrounds':[]})
+                except DeskError as exc:errors.append({'dedup_key':item.get('dedup_key'),'error':str(exc),'evidence':item.get('evidence',[])})
+            if errors:
+                user=json.loads(messages[1]['content']);user['citation_repairs_required']=errors
+                user['stage_instruction']='草稿中的这些证据已校验失败，不能原样沿用。必须依据本次materials中的实际通知正文修正source_id与行号；不能用背景文件或未提供范围的消息作依据。无法核实的事项保留疑问，不得编造证据。'
+                messages[1]['content']=json.dumps(user,ensure_ascii=False)
+                if len(messages[1]['content'])+len(SYSTEM)>j['config']['context_chars']:raise DeskError('最终证据纠正材料超过输入上限，请提高输入材料上限')
         supports_recovery=urlsplit(j['config']['base_url']).hostname=='api.deepseek.com'
         if j.get('resume_truncated') and supports_recovery:
             self._set_truncation_recovery(j,name)
@@ -612,15 +622,7 @@ class Pipeline:
         # Reconcile chunk-level candidates against existing stable keys before a single atomic publication.
         for oid,mapping in list(drafts.items()):
             if not mapping:continue
-            supporting=[];seen=set()
-            for m in mapping.values():
-                for e in m.get('evidence',[]):
-                    sid=e.get('source_id');info=pool.ledger.get(sid)
-                    if sid in seen or not info or not info['ranges']:continue
-                    lo,hi=info['ranges'][0]
-                    part=pool.read(sid,lo,hi,3000)
-                    if sum(len(p['text']) for p in supporting)+len(part['text'])<=j['config']['chunk_chars']:
-                        supporting.append(part);seen.add(sid)
+            supporting=self._reconcile_parts(pool,ctx,oid,list(mapping.values()),j['config']['chunk_chars'])
             checks=self._call(j,ctx,pool,provider,oid,supporting,oid+'-reconcile',list(mapping.values()))
             drafts[oid]={};self._collect(oid,checks,drafts,bgs)
         result={'matters':[m for ms in drafts.values() for m in ms.values()],
@@ -638,6 +640,36 @@ class Pipeline:
         j['results']=self.store.submit(j['run_id'],result)
         self._mark_processed(j)
         j.update(status='completed',phase='分析结果已提交，等待你的判断');self.save(j)
+    @staticmethod
+    def _reconcile_parts(pool,ctx,oid,items,limit):
+        parts=[];seen=set();size=0
+        primaries=[sid for sid in ctx['pipeline']['primary_sources'] if pool.sources[sid]['object_id']==oid]
+        for item in items:
+            for e in item.get('evidence',[]):
+                sid=e.get('source_id');info=pool.ledger.get(sid);locator=e.get('locator','')
+                if not info or not info['ranges']:continue
+                stamp=re.search(r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?',locator)
+                target=stamp[0].replace('T',' ') if stamp else None
+                candidates=list(dict.fromkeys([sid]+primaries))
+                chosen=None
+                for candidate in candidates:
+                    source=pool.sources[candidate]
+                    if source['object_id']!=oid or source['relative_path'].startswith('background/'):continue
+                    text,_=pool.text(candidate);lines=text.splitlines()
+                    if target:
+                        at=next((i for i,line in enumerate(lines) if line.startswith('## ') and target in line.replace('\\-','-').replace('T',' ')),None)
+                        if at is None:continue
+                        end=next((i for i in range(at+1,len(lines)) if lines[i].startswith('## ')),len(lines))
+                        chosen=pool.read(candidate,at+1,end,3000)
+                    elif candidate==sid:
+                        lo,hi=info['ranges'][0];chosen=pool.read(candidate,lo,hi,3000)
+                    if chosen:break
+                if not chosen:continue
+                key=(chosen['source_id'],chosen['start_line'],chosen['end_line'])
+                if key not in seen and size+len(chosen['text'])<=limit:
+                    parts.append(chosen);seen.add(key);size+=len(chosen['text'])
+        return parts
+
     @staticmethod
     def _asset_plan(ctx,pool,folder):
         groups={};available={p.stem for p in folder.glob('*.json') if '.rejected-' not in p.name and '.truncation.' not in p.name}
