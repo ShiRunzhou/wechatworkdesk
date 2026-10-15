@@ -405,7 +405,7 @@ class Pipeline:
             if c.get('efficient_mode',True):c['max_tokens']=min(c['max_tokens'],8192)
             self._budget(j,messages,c,images)
             selected=provider if c==j['config'] else self.provider_factory(c,self.settings.key())
-            j['request_count']=j.get('request_count',j['analysis_done'])+1;self.save(j)
+            j['request_count']=j.get('request_count',j['analysis_done'])+1;j['request_started_at']=now();j['request_finished_at']=None;self.save(j)
             started=time.monotonic()
             try:
                 answer,usage=selected.complete(messages)
@@ -413,9 +413,12 @@ class Pipeline:
                 self._account_usage(j,exc.usage);raise
             except Exception as exc:
                 if hasattr(exc,'usage'):self._account_usage(j,exc.usage)
+                if getattr(exc,'details',None):
+                    atomic_json(folder/(name+'.response-error.json'),{'details':exc.details,'usage':getattr(exc,'usage',{}),'recorded_at':now()})
+                    j['last_response_diagnostic']=exc.details
                 raise
             finally:
-                j['request_seconds']=j.get('request_seconds',0)+round(time.monotonic()-started,3);self.save(j)
+                j['request_seconds']=j.get('request_seconds',0)+round(time.monotonic()-started,3);j['request_finished_at']=now();self.save(j)
             self._account_usage(j,usage)
             return answer,usage
         try:result,usage=complete()

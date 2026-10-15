@@ -3,6 +3,7 @@ import json
 import re
 import socket
 import ssl
+import time
 from urllib import request,error,parse
 from .store import DeskError
 
@@ -17,8 +18,9 @@ class NoRedirect(request.HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs):return None
 
 class InvalidModelOutput(DeskError):
-    def __init__(self,message,usage):
+    def __init__(self,message,usage,details=None):
         super().__init__(message);self.usage=usage if isinstance(usage,dict) else {}
+        self.details=details or {}
 
 class ModelAPI:
     def __init__(self,config,key=''):
@@ -31,9 +33,21 @@ class ModelAPI:
         if self.key:headers['Authorization']='Bearer '+self.key
         req=request.Request(self.base+path,data=json.dumps(payload,ensure_ascii=False).encode('utf8') if payload is not None else None,headers=headers)
         opener=request.build_opener(request.ProxyHandler({'http':'http://127.0.0.1:1080','https':'http://127.0.0.1:1080'} if proxy else {}),NoRedirect())
+        started=time.monotonic()
         try:
             with opener.open(req,timeout=self.config['timeout']) as response:
-                b=response.read(8*1024**2+1)
+                chunks=[];size=0
+                while True:
+                    remaining=self.config['timeout']-(time.monotonic()-started)
+                    if remaining<=0:raise TimeoutError('total request deadline')
+                    # read1 returns keep-alive chunks promptly; each read uses the remaining total time.
+                    sock=getattr(getattr(response.fp,'raw',None),'_sock',None)
+                    if sock is not None:sock.settimeout(remaining)
+                    chunk=response.read1(min(65536,8*1024**2+1-size))
+                    if not chunk:break
+                    chunks.append(chunk);size+=len(chunk)
+                    if size>8*1024**2:raise DeskError('模型返回过大')
+                b=b''.join(chunks)
             if len(b)>8*1024**2:raise DeskError('模型返回过大')
             value=json.loads(b)
             if not isinstance(value,dict):raise DeskError('模型服务响应须为JSON对象')
@@ -48,7 +62,7 @@ class ModelAPI:
                 # A POST may already have arrived. Probe only; do not replay a paid request.
                 try:self._request('/models',None,True)
                 except DeskError:pass
-            raise DeskError('模型连接失败或超时；未自动重复可能已发送的请求。可稍后重试此任务。') from None
+            raise DeskError(f'模型连接失败或请求超过{self.config["timeout"]}秒；未自动重复可能已发送的请求。可稍后继续此任务。') from None
         except (json.JSONDecodeError,UnicodeError):raise DeskError('模型服务没有返回有效 JSON 响应') from None
     def test(self):
         if not self.base:raise DeskError('请先填写 API 地址')
@@ -63,14 +77,23 @@ class ModelAPI:
         if self.config['json_mode']:payload['response_format']={'type':'json_object'}
         payload.update(self.config.get('extra_parameters',{}))
         obj=self._request('/chat/completions',payload)
-        try:
-            choice=obj['choices'][0]
-            if choice.get('finish_reason')=='length':raise TruncatedOutput(choice,obj.get('usage',{}))
-            content=choice['message']['content']
-            if not isinstance(content,str):raise KeyError()
-            try:return parse_result(content),obj.get('usage',{})
-            except DeskError as e:raise InvalidModelOutput(str(e),obj.get('usage',{})) from None
-        except (KeyError,IndexError,TypeError):raise InvalidModelOutput('模型响应缺少可用文字；请核对兼容接口或思考输出设置',obj.get('usage',{})) from None
+        usage=obj.get('usage',{})
+        choices=obj.get('choices')
+        choice=choices[0] if isinstance(choices,list) and choices and isinstance(choices[0],dict) else {}
+        message=choice.get('message') if isinstance(choice.get('message'),dict) else {}
+        content=message.get('content')
+        details={'response_keys':list(obj),'choice_keys':list(choice),'message_keys':list(message),
+                 'finish_reason':choice.get('finish_reason'),'content_type':type(content).__name__,
+                 'content_chars':len(content) if isinstance(content,str) else 0,
+                 'reasoning_chars':len(message.get('reasoning_content') or '') if isinstance(message.get('reasoning_content'),str) else 0}
+        if choice.get('finish_reason')=='length':raise TruncatedOutput(choice,usage)
+        if not isinstance(content,str) or not content.strip():
+            reason='模型接口返回空正文' if choice else '模型接口未返回有效 choices'
+            if details['reasoning_chars']:reason+='（仅有思考内容）'
+            raise InvalidModelOutput(reason+'；本段未完成，响应结构已记录，未自动重复请求',usage,details)
+        try:return parse_result(content),usage
+        except DeskError as e:raise InvalidModelOutput(str(e),usage,details) from None
+
 
 def parse_result(text):
     text=re.sub(r'<think>.*?</think>','',text,flags=re.S).strip()
