@@ -20,7 +20,7 @@
       <div id="custom-range" class="two-columns" hidden><label>开始日期<span class="date-picker"><span id="start-display">yyyy/mm/dd</span><span>▦</span><input id="start" type="date" aria-label="开始日期"></span></label><label>结束日期<span class="date-picker"><span id="end-display">yyyy/mm/dd</span><span>▦</span><input id="end" type="date" aria-label="结束日期"></span></label></div>
       <p class="muted">默认从开始更新时回溯7天。重复消息跳过，已有资料保留；语音优先复用已有文字，缺失时本地转写。</p>
       <div class="actions"><button class="primary" id="update-only">开始更新上传</button></div><p id="update-hint" class="muted"></p><p id="update-feedback" role="status" hidden></p>
-      <details id="update-progress" class="progress-group"><summary>更新进度</summary><div class="actions"><button id="refresh-device">刷新</button></div><div id="device-jobs"></div></details>
+      <section id="update-progress" class="progress-group"><h2>更新进度</h2><div class="actions"><button id="refresh-device">刷新</button></div><div id="device-jobs"></div></section>
     </section>
   </div>
   
@@ -38,7 +38,7 @@
     <fieldset><legend>分析方式</legend><label class="radio"><input type="radio" name="mode" value="api">网站模型 API</label><label class="radio"><input type="radio" name="mode" value="agent" checked>Agent 分析</label></fieldset>
     <label>模型接口<select id="active-profile"></select></label><p id="model-hint" class="muted"></p><div class="actions"><button class="primary" id="start-job">开始分析</button></div><p id="analysis-feedback" role="status" hidden></p>
   </section>
-  <details id="analysis-progress" class="panel status-panel progress-group"><summary>分析进度与结果</summary><div class="actions"><button id="refresh-jobs">刷新</button></div><div id="jobs"></div></details>
+  <section id="analysis-progress" class="panel status-panel progress-group"><h2>分析进度与结果</h2><div class="actions"><button id="refresh-jobs">刷新</button></div><div id="jobs"></div></section>
   </section>
   <footer>原始导出资料保留 · 不发送微信消息 · 资料缺口会明确显示</footer>
 </main>
