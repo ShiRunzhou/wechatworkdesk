@@ -280,7 +280,7 @@ class Assistant:
                    'mode':mode,'export_directory':self.config['export_directory'],'weflow_config':self.config['weflow_config'],
                    'website':self.config['website'],'username':self.config['username'],'status':'running','phase':'开始更新','conversations':[],'analysis_job':None}
             if j['website']!=self.config['website'] or j['username']!=self.config['username']:raise ValueError('重试须使用原网站和账号')
-            j['status']='running';self.running=True
+            j['status']='running';j['execution_started_at']=datetime.now(TZ).isoformat();self.running=True
             try:self.save_job(j)
             except OSError:
                 self.running=False;j.update(status='partial',phase='任务日志无法保存，请检查文件占用或磁盘权限后重试')

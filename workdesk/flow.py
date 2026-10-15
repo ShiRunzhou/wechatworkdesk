@@ -36,6 +36,7 @@ SYSTEM += '\n按已生效exclude规则不列出的新通知，写入filtered_ite
 SYSTEM += '\n已生效规则相互冲突时，不静默过滤；列出相关事项并在questions中注明冲突与需要核实之处。'
 
 SYSTEM += '\n简洁提取事实与行动，不为例行通知反复检索。仅在未读原资料会实质改变责任、期限或完成判断时请求补查；已提供材料中的答案不再请求。背景资料只帮助理解，不单独生成旧通知。'
+SYSTEM += '\n最终核对必须保留草稿中正确的source_id与定位，不得将通知证据替换为背景文件编号；只有实际提供范围内的消息时间或行号才能作为依据。'
 SYSTEM += '\n人工反馈的id只能用于rule_suggestions.feedback_ids，绝不能放入evidence.source_id。原消息来源ID是回查线索，不等于该文件已提供正文。证据只引用材料头部source_id或allowed_evidence_sources中的已读资料。没有已生效exclude规则支持的一般未列出说明可写scope_exclusions，不能伪造空rule_id的filtered_items。'
 
 class AnalysisBudget(DeskError):
@@ -194,7 +195,7 @@ class Pipeline:
     def _phase(self,j,text):
         self._check(j['id']);j['phase']=text;self.save(j)
     def run(self,jid):
-        j=self.job(jid);j.update(status='running',error=None);self.save(j)
+        j=self.job(jid);j.update(status='running',error=None,execution_started_at=now());self.save(j)
         try:
             if j.get('run_id'):
                 with self.store.connect() as con:run=self.store.one(con,'runs',j['run_id'])
@@ -373,16 +374,22 @@ class Pipeline:
     def _call(self,j,ctx,pool,provider,oid,parts,name,draft=None,images=None):
         self._check(j['id']);folder=self.folder(j['id'])/'attempts'/j['attempt'];folder.mkdir(parents=True,exist_ok=True)
         checkpoint=folder/(name+'.json')
+        def validate(result):
+            self._validate_segment(result,oid,ctx)
+            if name.endswith('-reconcile'):
+                review_pool=Pool(ctx,copy.deepcopy(pool.ledger));review_pool.mark(parts)
+                for sid,_ in images or []:review_pool.ledger[sid]={'ranges':[],'total_lines':1,'method':'已向模型提供图片'}
+                self._validate_evidence(review_pool,{'matters':result.get('matters',[]),'backgrounds':result.get('backgrounds',[]),'filtered_items':result.get('filtered_items',[])})
         if not checkpoint.exists():
             rejected=sorted(folder.glob(name+'.rejected-*.json'),key=lambda p:p.stat().st_mtime,reverse=True)
             if rejected:
                 obj=json.loads(rejected[0].read_text('utf8'))
-                try:self._validate_segment(obj['result'],oid,ctx)
+                try:validate(obj['result'])
                 except DeskError:pass
                 else:atomic_json(checkpoint,obj)
         if checkpoint.exists():
             obj=json.loads(checkpoint.read_text('utf8'))
-            try:self._validate_segment(obj['result'],oid,ctx)
+            try:validate(obj['result'])
             except DeskError:
                 # Retain rejected output for diagnosis, but never reuse it on an explicit retry.
                 checkpoint.rename(folder/(name+'.rejected-'+uuid.uuid4().hex+'.json'))
@@ -427,7 +434,7 @@ class Pipeline:
             if not supports_recovery or name in j.get('recovery_calls',[]):raise
             self._set_truncation_recovery(j,name);self.save(j)
             result,usage=complete()
-        try:self._validate_segment(result,oid,ctx)
+        try:validate(result)
         except DeskError:
             atomic_json(folder/(name+'.rejected-'+uuid.uuid4().hex+'.json'),{'result':result,'usage':usage})
             raise

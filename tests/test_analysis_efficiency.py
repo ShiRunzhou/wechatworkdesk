@@ -25,6 +25,22 @@ class EfficiencyTests(unittest.TestCase):
     def run_job(self,**extra):
         j=self.flow.create({**self.payload,**extra},False);self.flow.run(j['id']);return self.flow.job(j['id'])
 
+    def test_invalid_cached_reconcile_is_rechecked_without_replaying_other_calls(self):
+        from workdesk.materials import Pool
+        j=self.run_job();ctx=self.flow.context(j['id']);pool=Pool(ctx,copy.deepcopy(j['ledger']))
+        name=self.obj['id']+'-reconcile';folder=self.flow.folder(j['id'])/'attempts'/j['attempt'];path=folder/(name+'.json')
+        original=json.loads(path.read_text('utf8'));bad=copy.deepcopy(original)
+        bad['result']['matters'][0]['evidence'][0]['locator']='消息时间2099-01-01T12:00'
+        path.write_text(json.dumps(bad),'utf8');before={p.name:p.read_bytes() for p in folder.glob('*.json') if p!=path}
+        calls=[]
+        class Provider:
+            def complete(self,messages):calls.append(1);return original['result'],{'total_tokens':1}
+        j['config']['efficient_mode']=False
+        parts=list(pool.chunks(ctx['pipeline']['primary_sources'][0],10000))
+        self.flow._call(j,ctx,pool,Provider(),self.obj['id'],parts,name,original['result']['matters'])
+        self.assertEqual(len(calls),1);self.assertTrue(list(folder.glob(name+'.rejected-*.json')))
+        for filename,content in before.items():self.assertEqual((folder/filename).read_bytes(),content)
+
     def test_custom_window_skips_empty_object_even_when_forced(self):
         empty=self.store.add_object('无近期消息群')
         md=self.root/'empty.md'

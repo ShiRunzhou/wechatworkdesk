@@ -9,3 +9,5 @@
 .progress-group>summary{font-size:18px;font-weight:700}.progress-group{border-top:1px solid var(--line);padding-top:16px}#analysis-feedback,#update-feedback{padding:10px;border-radius:8px;overflow-wrap:anywhere}
 
 .job>summary{font-size:15px;font-weight:700;color:var(--ink);overflow-wrap:anywhere}.job{margin:0}.progress-group>h2{margin-bottom:12px}
+
+.job>summary .job-time{display:inline-block;font-size:12px;font-weight:400;color:var(--muted);margin-left:16px}.job>summary{line-height:1.9}
