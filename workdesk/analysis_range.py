@@ -85,5 +85,5 @@ def freeze_window(store,oid,start,end,processed=None,allow_empty=False,source_id
     warnings=[]
     if unknown:
         primary.extend(unknown);warnings.append('部分历史Markdown无法识别消息日期，已保留供核查；不能据此断言覆盖所选时段。')
-    if not primary and not (allow_empty and (skipped or skipped_sources)) and not (blocks and not register):raise DeskError('所选对象在分析时段内没有可用聊天记录，请先更新该时段或调整范围')
-    return primary,asset_ids,{'object_id':oid,'analysis_messages':len(blocks),'total_messages':total,'reused_messages':skipped,'message_marks':marks},warnings
+    if not primary and not allow_empty and not (blocks and not register):raise DeskError('所选对象在分析时段内没有可用聊天记录，请先更新该时段或调整范围')
+    return primary,asset_ids,{'object_id':oid,'analysis_messages':len(blocks),'total_messages':total,'reused_messages':skipped,'reused_sources':skipped_sources,'message_marks':marks},warnings

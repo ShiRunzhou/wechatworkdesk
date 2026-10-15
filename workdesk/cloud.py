@@ -169,9 +169,13 @@ class CloudPipeline(Pipeline):
                 candidates[oid]={'signature':fingerprint,'messages':{},'sources':{}}
             if window:
                 for oid in ids:
-                    primary,assets,item,notes=freeze_window(self.store,oid,*window,processed=old_by_object[oid],allow_empty=incremental)
+                    primary,assets,item,notes=freeze_window(self.store,oid,*window,processed=old_by_object[oid],allow_empty=True)
+                    if not item['total_messages'] and not item.get('reused_sources') and not primary:
+                        warnings.append(known[oid]['name']+'：所选时段无可用消息，本轮跳过。')
                     candidates[oid]['messages']=item.pop('message_marks',{})
                     range_primary.extend(primary);range_assets.extend(assets);summary.append(item);warnings.extend(notes)
+            if window and not range_primary and not any(x.get('reused_messages') or x.get('reused_sources') for x in summary):
+                raise DeskError('所选对象在分析时段内没有可用聊天记录，请先更新该时段或调整范围')
             goal = cfg['default_goal'] + ('\n只从本轮消息时段提出新增事项：'+window[0].isoformat()+' 至 '+window[1].isoformat()+'。历史资料和已确认记忆用于理解、回查与沿用原事项；不要把范围外的旧通知重新当作新增事项。' if window else '\n本轮分析各对象最近一次上传的完整资料；上传时间不是消息时间。') + supplement
             latest_ids = []
             # Keep latest uploads as primary, while frozen history stays available for retrieval.
@@ -184,13 +188,13 @@ class CloudPipeline(Pipeline):
                     con.execute('INSERT OR IGNORE INTO run_imports SELECT ?,id FROM imports WHERE object_id=?',(run['id'],oid))
             ctx = self.store.context(run['id'])
             primary = [s['id'] for s in ctx['sources'] if s['id'] in latest_ids and not s['relative_path'].startswith(('background/','analysis/')) and Path(s['relative_path']).suffix.lower() == '.md']
-            available_primary=bool(primary or range_primary or any(x.get('reused_messages') for x in summary))
+            available_primary=bool(primary or range_primary or any(x.get('reused_messages') or x.get('reused_sources') for x in summary))
             if window:primary=range_primary
             if not window and incremental:
                 before=len(primary)
                 primary=[sid for sid in primary if not any(s['id']==sid and old_by_object[s['object_id']].get('sources',{}).get(s['relative_path'])==s['sha256'] for s in ctx['sources'])]
                 if before>len(primary):warnings.append('已发布且内容未变的聊天资料已复用，无需再次调用模型。')
-            if not available_primary and not (window and any(old_by_object.values())):
+            if not available_primary:
                 raise DeskError('所选对象最新资料中没有 Markdown 聊天记录')
             stamp = now()
             j = dict(id=uuid.uuid4().hex, created_at=stamp, mode=mode, start=window[0].isoformat() if window else stamp, end=window[1].isoformat() if window else stamp,

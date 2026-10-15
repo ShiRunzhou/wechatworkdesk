@@ -25,6 +25,30 @@ class EfficiencyTests(unittest.TestCase):
     def run_job(self,**extra):
         j=self.flow.create({**self.payload,**extra},False);self.flow.run(j['id']);return self.flow.job(j['id'])
 
+    def test_custom_window_skips_empty_object_even_when_forced(self):
+        empty=self.store.add_object('无近期消息群')
+        md=self.root/'empty.md'
+        md.write_text('# 群\n## 2026-09-01T12:00:00+08:00 甲\n历史消息。\n','utf8')
+        self.flow.upload(md,'empty.md',empty['id'])
+        j=self.run_job(sessions=[self.obj['id'],empty['id']],force_analysis=True)
+        self.assertEqual(j['status'],'completed',j['error'])
+        self.assertTrue(any('无近期消息群' in w and '跳过' in w for w in j['warnings']))
+        with self.assertRaisesRegex(Exception,'没有 Markdown|没有可用'):
+            self.flow.create({**self.payload,'sessions':[empty['id']],'force_analysis':True},False)
+
+    def test_delete_history_preserves_matters_cache_and_sources(self):
+        j=self.run_job()
+        before=self.store.dashboard()['matters']
+        cache=(self.flow.root/'analysis-cache.json').read_bytes()
+        self.flow.delete(j['id'])
+        self.assertFalse(any(x['id']==j['id'] for x in self.flow.jobs()))
+        self.assertEqual(self.store.dashboard()['matters'],before)
+        self.assertEqual((self.flow.root/'analysis-cache.json').read_bytes(),cache)
+        self.assertTrue(self.md.exists())
+        pending=self.flow.create(self.payload,False)
+        with self.assertRaisesRegex(Exception,'停止'):
+            self.flow.delete(pending['id'])
+
     def test_overlap_reuses_published_messages_but_new_message_is_analyzed(self):
         first=self.run_job();self.assertEqual(first['status'],'completed',first['error'])
         count=len(self.model.calls);again=self.run_job()

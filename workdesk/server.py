@@ -182,11 +182,12 @@ def make_server(store, port=8770, pipeline=None, website=None):
                 if path=='/api/pipeline/model-test':
                     return self.send(200,pipeline.provider_factory(pipeline.settings.public(),pipeline.settings.key()).test())
                 if path=='/api/pipeline/jobs':return self.send(202,pipeline.create(payload))
-                match=re.fullmatch(f'/api/pipeline/jobs/{ID}/(retry|stop|search|read|submit)',path)
+                match=re.fullmatch(f'/api/pipeline/jobs/{ID}/(retry|stop|search|read|submit|delete)',path)
                 if match:
                     jid,action=match[1],match[2]
                     if action=='retry':return self.send(202,pipeline.retry(jid,limits=payload.get('limits')))
                     if action=='stop':return self.send(200,pipeline.stop(jid))
+                    if action=='delete':return self.send(200,pipeline.delete(jid))
                     if action=='submit':return self.send(200,pipeline.submit(jid,payload))
                     return self.send(200,pipeline.retrieve(jid,payload,action=='read'))
                 match = re.fullmatch(f"/api/matters/{ID}/feedback", path)

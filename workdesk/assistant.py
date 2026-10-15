@@ -173,7 +173,16 @@ class Assistant:
         from .local_voice import status
         with self.lock:
             return copy.deepcopy({'config':self.config,'sessions':list(self.catalog.values()),'objects':self.objects,
-                'password_set':bool(self.password),'voice_status':status(self.config),'jobs':sorted(self._job_cache.values(),key=lambda j:j['created_at'],reverse=True)[:30]})
+                'password_set':bool(self.password),'voice_status':status(self.config),'jobs':sorted((j for j in self._job_cache.values() if not j.get('deleted_at')),key=lambda j:j['created_at'],reverse=True)[:30]})
+
+    def delete_job(self,p):
+        with self.lock:
+            j=self._job_cache.get(p.get('id'))
+            if not j:raise ValueError('任务不存在')
+            if j['status'] in ('running','queued'):raise ValueError('请等待更新结束后再删除记录')
+            j['deleted_at']=datetime.now(TZ).isoformat()
+            self.save_job(j)
+            return {'deleted':True}
 
     def save(self,p):
         with self.lock:
@@ -385,7 +394,7 @@ def make_server(assistant,port=8771):
                 if self.path=='/api/device/quit':
                     if assistant.running:raise ValueError('更新正在进行，请完成后关闭助手')
                     self.send(200,{'closed':True});threading.Thread(target=self.server.shutdown,daemon=True).start();return
-                methods={'/api/device/settings':assistant.save,'/api/device/contacts':lambda _:assistant.refresh(),'/api/device/connect':lambda _:assistant.connect(),'/api/device/preset':assistant.preset,'/api/device/start':assistant.start}
+                methods={'/api/device/delete':assistant.delete_job,'/api/device/settings':assistant.save,'/api/device/contacts':lambda _:assistant.refresh(),'/api/device/connect':lambda _:assistant.connect(),'/api/device/preset':assistant.preset,'/api/device/start':assistant.start}
                 if self.path not in methods:return self.send(404,{'error':'未找到操作'})
                 self.send(200,methods[self.path](p))
             except (ValueError,RuntimeError) as exc:

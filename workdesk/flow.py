@@ -97,7 +97,16 @@ class Pipeline:
         return {**{k:v for k,v in j.items() if k not in ('config','cache_candidates')},'budget_limits':{k:j['config'].get(k,default) for k,default in (('max_model_calls',60),('max_total_tokens',300000))}}
     def jobs(self):
         paths=sorted((self.root/'jobs').glob('*/state.json'),key=lambda p:p.stat().st_mtime,reverse=True) if (self.root/'jobs').exists() else []
-        return [self.public_job(p.parent.name) for p in paths[:20]]
+        return [self.public_job(p.parent.name) for p in paths if not json.loads(p.read_text('utf8')).get('deleted_at')][:20]
+    def delete(self,jid):
+        with self.guard:
+            j=self.job(jid)
+            if j['status'] in ('queued','running') or self.running==jid:
+                raise DeskError('请先停止正在运行的任务，再删除记录')
+            j['deleted_at']=now()
+            self.save(j)
+            return {'deleted':True}
+
     def create(self,payload,background=True):
         with self.guard:
             if self.running:raise DeskError('已有任务正在运行，请等待或停止后再开始')

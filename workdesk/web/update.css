@@ -5,3 +5,5 @@
 .session>span{flex:1;min-width:0}.session>select{max-width:170px;font-size:12px}.analysis-sessions{max-height:280px;overflow:auto}.workspace+.panel{margin-top:22px}
 
 .workflow-region{margin:24px 0;padding:18px;border:1px solid var(--line);border-radius:18px;background:#eef3ed}.workflow-region .region-title{font-size:20px;margin:0 0 16px}.workflow-region[aria-labelledby="analysis-region-title"]{background:#f1f3f5}.workflow-region>.panel:first-of-type{margin-top:0}@media(max-width:800px){.workflow-region{padding:10px}.workflow-region .region-title{margin:4px 6px 12px}}
+
+.progress-group>summary{font-size:18px;font-weight:700}.progress-group{border-top:1px solid var(--line);padding-top:16px}#analysis-feedback,#update-feedback{padding:10px;border-radius:8px;overflow-wrap:anywhere}
