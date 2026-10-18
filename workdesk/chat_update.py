@@ -393,7 +393,7 @@ def main():
         if args.retry_latest:
             reports = list((root/'data/chat-update').glob('report-*.json'))
             if not reports:
-                raise ValueError('尚无更新报告；请先运行更新工作聊天.cmd')
+                raise ValueError('尚无更新报告；请先运行 python -m workdesk.chat_update')
             args.retry_failed = max(reports, key=lambda p:p.stat().st_mtime_ns)
         if args.retry_failed:
             retry = {r['external_id'] for r in json.loads(args.retry_failed.read_text('utf8'))['conversations'] if r['error']}

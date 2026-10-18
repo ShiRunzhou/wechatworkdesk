@@ -167,6 +167,9 @@ class Pipeline:
             # Model, prompt, segmentation and capability changes still start a new attempt.
             if cfg!=j['config']:
                 changed={k for k in set(cfg)|set(j['config']) if cfg.get(k)!=j['config'].get(k)}
+                # Raising only the input ceiling leaves prompts and chunk boundaries unchanged.
+                if cfg.get('context_chars',0)>=j['config'].get('context_chars',0):
+                    changed.discard('context_chars')
                 j['config']={**cfg,'material_roots':j['config']['material_roots'],'default_goal':j['config']['default_goal']}
                 if not changed.issubset({'max_tokens','timeout','max_model_calls','max_total_tokens','efficient_mode','incremental_analysis','lookup_rounds'}):
                     j.update(attempt=uuid.uuid4().hex,ledger={},analysis_done=0,recovery_calls=[],memory_extras={'rule_suggestions':[],'filtered_items':[]})

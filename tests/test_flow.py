@@ -82,6 +82,28 @@ class FlowTests(unittest.TestCase):
         self.assertEqual(retry['attempt'],attempt);self.assertEqual(retry['analysis_done'],done)
         self.model.fail_after=None;self.flow.run(j['id'])
         self.assertEqual(self.flow.job(j['id'])['status'],'completed');self.assertEqual(len(self.model.calls),3)
+    def test_increased_input_limit_reuses_completed_calls(self):
+        self.model.fail_after=2;j=self.run_job();attempt=j['attempt'];done=j['analysis_done']
+        self.flow.settings.save({'context_chars':96000})
+        retry=self.flow.retry(j['id'],background=False)
+        self.assertEqual(retry['attempt'],attempt);self.assertEqual(retry['analysis_done'],done)
+        self.assertEqual(self.flow.job(j['id'])['config']['context_chars'],96000)
+        self.model.fail_after=None;self.flow.run(j['id'])
+        self.assertEqual(self.flow.job(j['id'])['status'],'completed')
+        self.assertEqual(len(self.model.calls),3)
+    def test_input_limit_increase_does_not_hide_prompt_changes(self):
+        for change in ({'model':'different-model'},{'chunk_chars':8000},{'default_goal':'新的分析需求'}):
+            with self.subTest(change=change):
+                self.model.fail_after=2;j=self.run_job();attempt=j['attempt']
+                self.flow.settings.save({'context_chars':self.flow.settings.public()['context_chars']+1000,**change})
+                retry=self.flow.retry(j['id'],background=False)
+                self.assertNotEqual(retry['attempt'],attempt)
+                self.assertEqual(retry['analysis_done'],0)
+    def test_decreased_input_limit_invalidates_previous_attempt(self):
+        self.model.fail_after=2;j=self.run_job();attempt=j['attempt']
+        self.flow.settings.save({'context_chars':32000})
+        retry=self.flow.retry(j['id'],background=False)
+        self.assertNotEqual(retry['attempt'],attempt)
     def test_changed_model_invalidates_previous_attempt(self):
         self.model.fail_after=2;j=self.run_job();attempt=j['attempt']
         self.flow.settings.save({'model':'different-model'})
