@@ -87,3 +87,5 @@ WeChatWorkDesk包含更新分析模块和事件处理模块。更新分析模块
 ## WCWD 电脑更新助手
 
 双击 `启动工作台并更新.cmd`，在电脑上选择联系人和群、默认最近7天、增量导出并上传网站。使用说明见 [docs/update-assistant.md](docs/update-assistant.md)。
+
+日常默认入口：双击“启动工作台并更新.cmd”后打开 https://desk.plantisland.cn/update。网站按需连接本机更新程序；浏览器首次提示本地网络权限时选择允许。8771地址保留为备用入口。

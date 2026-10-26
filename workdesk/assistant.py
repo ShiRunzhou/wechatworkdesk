@@ -91,9 +91,12 @@ class Remote:
         u = parse.urlsplit(self.base)
         if u.scheme != 'https' or not u.hostname or u.username or u.password or u.query or u.fragment or u.path:
             raise ValueError('网站地址须为 https:// 主机地址')
-        self.headers = {'Authorization': 'Basic '+base64.b64encode((config['username']+':'+password).encode()).decode(), 'Origin': self.base}
+        self.device_token=password.startswith('wcwd-device:')
+        auth='Bearer '+password[12:] if self.device_token else 'Basic '+base64.b64encode((config['username']+':'+password).encode()).decode()
+        self.headers = {'Authorization':auth,'Origin':self.base}
 
     def call(self, path, payload=None, file=None):
+        if self.device_token and path=='/api/state':path='/api/desktop/catalog'
         headers = dict(self.headers)
         body = None
         if file:
@@ -149,7 +152,7 @@ class Assistant:
     def __init__(self, root, client_factory=Client, remote_factory=Remote):
         self.root=Path(root);self.root.mkdir(parents=True,exist_ok=True)
         self.path=self.root/'settings.json';self.lock=threading.RLock();self.running=False
-        self.client_factory=client_factory;self.remote_factory=remote_factory;self.password='';self.stt_key='';self.catalog={};self.objects=[]
+        self.client_factory=client_factory;self.remote_factory=remote_factory;self.password='';self.pair_expires_at=0;self.stt_key='';self.catalog={};self.objects=[]
         self.config={'website':'https://desk.plantisland.cn','username':'shirunzhou',
             'weflow_config':str(Path(os.environ.get('APPDATA',str(Path.home())))/'weflow/WeFlow-config.json'),
             'export_directory':str(Path('E:/wechatrecord') if Path('E:/wechatrecord').is_dir() else Path.home()/'Documents/WeChatWorkDesk/wechatrecord'),
@@ -173,7 +176,7 @@ class Assistant:
         from .local_voice import status
         with self.lock:
             return copy.deepcopy({'config':self.config,'sessions':list(self.catalog.values()),'objects':self.objects,
-                'password_set':bool(self.password),'voice_status':status(self.config),'jobs':sorted((j for j in self._job_cache.values() if not j.get('deleted_at')),key=lambda j:j['created_at'],reverse=True)[:30]})
+                'password_set':bool(self.password),'pair_expires_at':self.pair_expires_at,'voice_status':status(self.config),'jobs':sorted((j for j in self._job_cache.values() if not j.get('deleted_at')),key=lambda j:j['created_at'],reverse=True)[:30]})
 
     def delete_job(self,p):
         with self.lock:
@@ -221,6 +224,16 @@ class Assistant:
                 if not isinstance(p['mapping'],dict) or any(not valid_talker(t) or not isinstance(v,str) or (v and not re.fullmatch('[a-f0-9]{32}',v)) for t,v in p['mapping'].items()):raise ValueError('网站对象对应关系无效')
                 candidate['mapping']=p['mapping']
             self.config=candidate;atomic_json(self.path,self.config)
+            return self.public()
+
+    def pair(self,p):
+        with self.lock:
+            if self.running:raise ValueError('更新进行中，稍后再配对')
+            token=p.get('token')
+            if not isinstance(token,str) or not re.fullmatch(r'[A-Za-z0-9_-]{40,100}',token):raise ValueError('配对凭证无效')
+            password='wcwd-device:'+token
+            state=self.remote_factory(self.config,password).call('/api/state')
+            self.password=password;self.pair_expires_at=float(p.get('expires_at',0));self.objects=state['objects']
             return self.public()
 
     def refresh(self):
@@ -364,11 +377,24 @@ def make_server(assistant,port=8771):
         def send(self,status,data,mime='application/json; charset=utf-8'):
             body=data if isinstance(data,bytes) else json.dumps(data,ensure_ascii=False).encode()
             self.send_response(status);self.send_header('Content-Type',mime);self.send_header('Content-Length',str(len(body)))
+            origin=self.headers.get('Origin')
+            if origin==assistant.config['website'].rstrip('/'):
+                self.send_header('Access-Control-Allow-Origin',origin)
+                self.send_header('Vary','Origin')
+                self.send_header('Access-Control-Allow-Methods','GET, POST, OPTIONS')
+                self.send_header('Access-Control-Allow-Headers','Content-Type')
+                self.send_header('Access-Control-Allow-Private-Network','true')
             self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff')
             self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
             self.end_headers();self.wfile.write(body)
         def allowed(self):return self.headers.get('Host') in (f'127.0.0.1:{self.server.server_port}',f'localhost:{self.server.server_port}')
+        def do_OPTIONS(self):
+            if not self.allowed() or self.headers.get('Origin')!=assistant.config['website'].rstrip('/') or not self.path.startswith('/api/device/'):
+                return self.send(403,{'error':'不允许的网站来源'})
+            return self.send(200,{})
         def do_GET(self):
+            if self.headers.get('Origin')==assistant.config['website'].rstrip('/') and not self.path.startswith('/api/device/'):
+                return self.send(403,{'error':'网站只能访问本机连接接口'})
             if not self.allowed():return self.send(403,{'error':'仅允许本机访问'})
             if self.path=='/api/device/state':return self.send(200,{'connected':True,**assistant.public()})
             if self.path=='/api/health':return self.send(200,{'assistant':True,'root':str(assistant.root.resolve())})
@@ -379,8 +405,8 @@ def make_server(assistant,port=8771):
             from .gateway import proxy
             return proxy(self,assistant)
         def do_POST(self):
-            origins=[f'http://127.0.0.1:{self.server.server_port}',f'http://localhost:{self.server.server_port}']
-            if not self.allowed() or self.headers.get('Origin') not in origins or self.headers.get('Sec-Fetch-Site')=='cross-site':return self.send(403,{'error':'请从更新助手页面操作'})
+            origins=[f'http://127.0.0.1:{self.server.server_port}',f'http://localhost:{self.server.server_port}',assistant.config['website'].rstrip('/')]
+            if not self.allowed() or self.headers.get('Origin') not in origins:return self.send(403,{'error':'请从更新助手页面操作'})
             if self.headers.get('Content-Type')!='application/json':return self.send(415,{'error':'请求格式错误'})
             try:
                 n=int(self.headers.get('Content-Length','0'))
@@ -391,10 +417,12 @@ def make_server(assistant,port=8771):
                 if not self.path.startswith('/api/device/'):
                     from .gateway import proxy
                     return proxy(self,assistant,json.dumps(p,ensure_ascii=False).encode())
+                if self.headers.get('Origin')==assistant.config['website'].rstrip('/') and not self.path.startswith('/api/device/'):
+                    return self.send(403,{'error':'网站只能访问本机连接接口'})
                 if self.path=='/api/device/quit':
                     if assistant.running:raise ValueError('更新正在进行，请完成后关闭助手')
                     self.send(200,{'closed':True});threading.Thread(target=self.server.shutdown,daemon=True).start();return
-                methods={'/api/device/delete':assistant.delete_job,'/api/device/settings':assistant.save,'/api/device/contacts':lambda _:assistant.refresh(),'/api/device/connect':lambda _:assistant.connect(),'/api/device/preset':assistant.preset,'/api/device/start':assistant.start}
+                methods={'/api/device/pair':assistant.pair,'/api/device/delete':assistant.delete_job,'/api/device/settings':assistant.save,'/api/device/contacts':lambda _:assistant.refresh(),'/api/device/connect':lambda _:assistant.connect(),'/api/device/preset':assistant.preset,'/api/device/start':assistant.start}
                 if self.path not in methods:return self.send(404,{'error':'未找到操作'})
                 self.send(200,methods[self.path](p))
             except (ValueError,RuntimeError) as exc:

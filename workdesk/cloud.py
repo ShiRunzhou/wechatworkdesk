@@ -34,7 +34,21 @@ class WebsiteAccess:
         self.lock = threading.Lock()
         self.cache = {}
         self.failures = []
+        self.device_tokens = {}
         self.secret = secrets.token_bytes(32)
+
+    def issue_device_token(self):
+        token=secrets.token_urlsafe(32);expires=time.time()+12*3600
+        with self.lock:
+            self.device_tokens={k:v for k,v in self.device_tokens.items() if v>time.time()}
+            if len(self.device_tokens)>=32:self.device_tokens.pop(next(iter(self.device_tokens)))
+            self.device_tokens[hashlib.sha256(token.encode()).hexdigest()]=expires
+        return {'token':token,'expires_at':expires}
+
+    def authenticate_device(self,header,path,method):
+        allowed=(method=='GET' and path=='/api/desktop/catalog' or method=='POST' and path in ('/api/objects','/api/uploads'))
+        if not allowed or not header or not header.startswith('Bearer ') or len(header)>256:return False
+        with self.lock:return self.device_tokens.get(hashlib.sha256(header[7:].encode()).hexdigest(),0)>time.time()
 
     def authenticate(self, header):
         if not header or len(header) > 2048:

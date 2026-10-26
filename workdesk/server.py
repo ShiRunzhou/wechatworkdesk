@@ -33,7 +33,7 @@ def make_server(store, port=8770, pipeline=None, website=None):
                 f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
 
         def authenticated(self):
-            if website and not website.authenticate(self.headers.get('Authorization')):
+            if website and not (website.authenticate_device(self.headers.get('Authorization'),urlsplit(self.path).path,self.command) or website.authenticate(self.headers.get('Authorization'))):
                 self.close_connection = True
                 self.send(401, {'error': '请登录 WeChatWorkDesk'}, headers={'WWW-Authenticate': 'Basic realm="WeChatWorkDesk", charset="UTF-8"'})
                 return False
@@ -50,7 +50,7 @@ def make_server(store, port=8770, pipeline=None, website=None):
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+            self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self' http://127.0.0.1:8771; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
             if filename:
                 self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{quote(filename)}")
             self.end_headers()
@@ -68,6 +68,7 @@ def make_server(store, port=8770, pipeline=None, website=None):
                                            "instance": hashlib.sha256(str(store.root).casefold().encode()).hexdigest()})
                 if path == '/api/pipeline/config':
                     return self.send(200,{**pipeline.settings.public(), 'website_mode': bool(website), 'analysis_scope':pipeline.analysis_scope() if hasattr(pipeline,'analysis_scope') else {}})
+                if path=='/api/desktop/catalog':return self.send(200,{'objects':store.dashboard()['objects']})
                 if path=='/api/device/state':return self.send(200,{'connected':False})
                 if path == '/api/pipeline/sessions':
                     return self.send(200,pipeline.sessions('refresh=1' in urlsplit(self.path).query))
@@ -181,6 +182,9 @@ def make_server(store, port=8770, pipeline=None, website=None):
                     return self.send(200,store.add_object(payload.get('name',''),payload.get('kind','group'),''))
                 if path=='/api/pipeline/model-test':
                     return self.send(200,pipeline.provider_factory(pipeline.settings.public(),pipeline.settings.key()).test())
+                if path=='/api/desktop-token':
+                    if not website:raise DeskError('配对仅用于网站模式')
+                    return self.send(200,website.issue_device_token())
                 if path=='/api/pipeline/jobs':return self.send(202,pipeline.create(payload))
                 match=re.fullmatch(f'/api/pipeline/jobs/{ID}/(retry|stop|search|read|submit|delete)',path)
                 if match:

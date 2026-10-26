@@ -50,7 +50,10 @@ def main():
             time.sleep(.2)
         else:
             p.terminate();raise SystemExit('更新助手启动超时。')
-    if '--no-browser' not in sys.argv:webbrowser.open(URL+'/update')
-    print(URL+'/update')
+    website=config.get('website','https://desk.plantisland.cn').rstrip('/')
+    target=website+'/update'
+    if '--local' in sys.argv:target=URL+'/update'
+    if '--no-browser' not in sys.argv:webbrowser.open(target)
+    print(target)
 
 if __name__=='__main__':main()

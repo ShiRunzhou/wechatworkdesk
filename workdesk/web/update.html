@@ -6,7 +6,7 @@
 <main>
   <div class="heading"><div><h1>更新分析模块</h1><p>更新上传、分析资料，再进入事件处理模块；各设备使用网站保存的同一份数据。</p></div></div>
   <p id="notice" role="status" hidden></p>
-  <p id="device-status" class="muted">正在检查本机连接…</p>
+  <p id="device-status" class="muted">正在检查本机连接…</p><button id="connect-device" hidden>连接本机</button>
   <section class="workflow-region" aria-labelledby="update-region-title"><h2 id="update-region-title" class="region-title">更新区域</h2>
   <div class="workspace">
     <section class="panel conversations"><div class="section-head"><h2>更新对象</h2><button id="refresh-sessions">刷新联系人和群</button></div>
@@ -43,7 +43,7 @@
   <footer>原始导出资料保留 · 不发送微信消息 · 资料缺口会明确显示</footer>
 </main>
 <dialog id="settings"><form id="settings-form"><div class="section-head"><h2>分析设置</h2><button type="button" id="settings-close" aria-label="关闭">×</button></div>
-  <details id="device-settings" class="settings-group"><summary>本设备连接与语音设置</summary><label>WeFlow程序路径（可选）<input name="weflow_executable"></label><label>WeFlow配置文件<input name="weflow_config"></label><label>聊天记录保存目录<input name="export_directory"></label><label>语音转写方式<select name="voice_mode"><option value="local">本地SenseVoice（默认）</option><option value="api">转写API</option><option value="cache">仅复用已有转写</option></select></label><p id="voice-state" class="muted"></p><label>模型目录覆盖（通常留空）<input name="voice_model_directory"></label><label>转写API地址（仅API模式）<input name="stt_url"></label><label>转写模型名称（仅API模式）<input name="stt_model"></label><label>转写密钥（留空保持本次运行已输入密钥）<input name="stt_key" type="password"></label><p class="muted">路径只属于本设备；模型自动按WeFlow配置识别。网站登录使用同一账号，密码只保留在本机程序运行内存中。</p></details>
+  <details id="device-settings" class="settings-group"><summary>本设备连接与语音设置</summary><label>WeFlow程序路径（可选）<input name="weflow_executable"></label><label>WeFlow配置文件<input name="weflow_config"></label><label>聊天记录保存目录<input name="export_directory"></label><label>语音转写方式<select name="voice_mode"><option value="local">本地SenseVoice（默认）</option><option value="api">转写API</option><option value="cache">仅复用已有转写</option></select></label><p id="voice-state" class="muted"></p><label>模型目录覆盖（通常留空）<input name="voice_model_directory"></label><label>转写API地址（仅API模式）<input name="stt_url"></label><label>转写模型名称（仅API模式）<input name="stt_model"></label><label>转写密钥（留空保持本次运行已输入密钥）<input name="stt_key" type="password"></label><p class="muted">路径只属于本设备；模型自动按WeFlow配置识别。网站自动配对的上传凭证只保留在本机程序运行内存中，重启后自动重新配对；无需另填网站密码。</p></details>
   <details class="settings-group"><summary>模型接口与密钥</summary>
   <label>已保存接口<select id="settings-profile"></select></label><div class="actions"><button type="button" id="profile-create">新增接口</button><button type="button" id="profile-delete">删除当前接口</button></div><label>配置名称<input name="profile_name" required maxlength="100" placeholder="例如 本地模型 / 云端模型"></label>
   <label>模型服务地址<input name="base_url" type="url" placeholder="例如 http://127.0.0.1:1234/v1"></label>
